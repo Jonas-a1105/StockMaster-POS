@@ -1,0 +1,174 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// 1. Usuarios y Empleados (Login/Registro/Nómina)
+model User {
+  id        String    @id @default(uuid())
+  email     String    @unique
+  password  String
+  name      String
+  role      String    @default("CASHIER") // ADMIN, CASHIER, AUDITOR
+  pin       String?   // Hash del PIN de 4-6 dígitos para inicio de sesión offline
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  // Relaciones
+  sales     Sale[]
+  payroll   Payroll[]
+  auditLogs AuditLog[]
+}
+
+// 2. Inventario y Productos
+model Product {
+  id          String   @id @default(uuid())
+  code        String   @unique // Código de barras para lector POS
+  name        String
+  category    String
+  price       Float    // Precio de venta
+  cost        Float    // Costo de compra
+  stock       Int      @default(0)
+  minStock    Int      @default(5) // Alerta de reposición
+  version     Int      @default(1) // Control de concurrencia y replicación RxDB
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relaciones
+  saleItems     SaleItem[]
+  purchaseItems PurchaseItem[]
+}
+
+// 3. Proveedores
+model Supplier {
+  id        String   @id @default(uuid())
+  name      String
+  contact   String?
+  phone     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relaciones
+  purchases Purchase[]
+}
+
+// 4. Clientes
+model Client {
+  id        String   @id @default(uuid())
+  name      String
+  email     String?
+  phone     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relaciones
+  sales Sale[]
+}
+
+// 5. Ventas (Caja / POS)
+model Sale {
+  id            String   @id @default(uuid())
+  ticketNumber  String   @unique // Consecutivo de ticket fiscal/control
+  cashierId     String
+  clientId      String?
+  total         Float
+  paymentMethod String   // EFECTIVO, TARJETA, TRANSFERENCIA
+  dolarRate     Float    @default(40.50)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relaciones
+  cashier   User       @relation(fields: [cashierId], references: [id], onDelete: Restrict)
+  client    Client?    @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  saleItems SaleItem[]
+}
+
+model SaleItem {
+  id        String @id @default(uuid())
+  saleId    String
+  productId String
+  quantity  Int
+  price     Float  // Precio de venta histórico
+
+  // Relaciones
+  sale    Sale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+}
+
+// 6. Compras y Abastecimiento (OCR)
+model Purchase {
+  id            String   @id @default(uuid())
+  invoiceNumber String?  // Número de factura del proveedor
+  supplierId    String
+  total         Float
+  ocrProcessed  Boolean  @default(false)
+  ocrRawData    String?  // Contenedor JSON de la lectura OCR
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relaciones
+  supplier      Supplier       @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  purchaseItems PurchaseItem[]
+}
+
+model PurchaseItem {
+  id         String @id @default(uuid())
+  purchaseId String
+  productId  String
+  quantity   Int
+  cost       Float  // Costo unitario histórico
+
+  // Relaciones
+  purchase Purchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  product  Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
+}
+
+// 7. Nómina de Empleados
+model Payroll {
+  id          String   @id @default(uuid())
+  employeeId  String
+  baseSalary  Float
+  hoursWorked Int      @default(0)
+  bonuses     Float    @default(0)
+  deductions  Float    @default(0)
+  totalPaid   Float
+  status      String   @default("PENDIENTE") // PAGADO, PENDING, RECHAZADO
+  paymentDate DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relaciones
+  employee User @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+}
+
+// 8. Tokens de Refresco para Sesiones Seguras
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique // Hash del refresh token
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  // Relaciones
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// 9. Bitácora / Auditoría Global (Seguridad Extrema)
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String?
+  action    String   // VENTA_CREAR, PRODUCTO_MODIFICAR, NOMINA_PAGAR, etc.
+  details   String   // Historial de cambios formateado en JSON (before/after)
+  ipAddress String
+  userAgent String
+  createdAt DateTime @default(now())
+
+  // Relaciones
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+}

@@ -1,0 +1,87 @@
+name: CI/CD StockMasterPro
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  server-lint-test:
+    name: Server — Lint & Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./server
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: stockmaster_admin
+          POSTGRES_PASSWORD: stockmaster_test
+          POSTGRES_DB: stockmaster_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: server/package-lock.json
+
+      - run: npm ci
+
+      - run: npm run lint
+
+      - run: npx prisma migrate deploy
+        env:
+          DATABASE_URL: postgresql://stockmaster_admin:stockmaster_test@localhost:5432/stockmaster_test
+
+      - run: npm run test
+        env:
+          DATABASE_URL: postgresql://stockmaster_admin:stockmaster_test@localhost:5432/stockmaster_test
+          JWT_SECRET: test_jwt_secret
+          NODE_ENV: test
+
+  client-lint-build:
+    name: Client — Lint & Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./client
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: client/package-lock.json
+
+      - run: npm ci
+
+      - run: npm run build
+
+  docker:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    needs: [server-lint-test, client-lint-build]
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: docker compose build
