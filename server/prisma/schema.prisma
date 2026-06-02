@@ -19,9 +19,10 @@ model User {
   updatedAt DateTime  @updatedAt
 
   // Relaciones
-  sales     Sale[]
-  payroll   Payroll[]
-  auditLogs AuditLog[]
+  sales         Sale[]
+  payroll       Payroll[]
+  auditLogs     AuditLog[]
+  refreshTokens RefreshToken[]
 }
 
 // 2. Inventario y Productos
