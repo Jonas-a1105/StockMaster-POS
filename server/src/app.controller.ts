@@ -1,4 +1,5 @@
-import { Controller, Get, SkipThrottle } from '@nestjs/common';
+import { Controller, Get } from '@nestjs/common';
+import { SkipThrottle } from '@nestjs/throttler';
 import { AppService } from './app.service';
 
 @Controller()
@@ -7,7 +8,7 @@ export class AppController {
 
   @Get()
   @SkipThrottle()
-  getHello(): string {
+  getHello() {
     return {
       name: 'StockMasterPro API',
       version: '1.0.0',
