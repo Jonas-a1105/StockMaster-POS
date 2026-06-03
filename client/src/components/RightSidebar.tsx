@@ -202,7 +202,7 @@ export default function RightSidebar({ isDarkMode }: RightSidebarProps) {
   return (
     <aside className="right-sidebar">
       {/* Contenedor Único Combinado del Sidebar */}
-      <div className="widget petshop-card" style={{ display: 'flex', flexDirection: 'column', padding: '24px 20px' }}>
+      <div className="widget petshop-card" style={{ display: 'flex', flexDirection: 'column', padding: '24px 20px', flex: 1 }}>
         
         {/* SECCIÓN 1: StockMaster POS y Doughnut Chart */}
         <div className="petshop-header">
