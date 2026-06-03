@@ -3053,12 +3053,13 @@ body.glass-noise-enabled .widget::after {
   .left-panel {
     width: 100% !important;
     min-width: 0 !important;
+    gap: 14px !important;
   }
 
   /* 5. OVERVIEW CARDS */
   .overview-row {
     flex-direction: column !important;
-    gap: 10px !important;
+    gap: 14px !important;
   }
 
   .card-connector-gap {
@@ -3066,8 +3067,10 @@ body.glass-noise-enabled .widget::after {
   }
 
   .overview-card {
-    height: 90px !important;
-    border-radius: 14px !important;
+    height: auto !important;
+    min-height: 110px !important;
+    padding: 16px 20px !important;
+    border-radius: 16px !important;
   }
 
   .overview-card-wrapper::before,
