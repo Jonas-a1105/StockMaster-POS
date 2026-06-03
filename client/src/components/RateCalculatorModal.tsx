@@ -495,18 +495,7 @@ export default function RateCalculatorModal({ isOpen, onClose }: RateCalculatorM
 
           {/* Calculator Keypad - shown only in complex view */}
           {isComplexView && (
-            <div 
-              className="animate-entrance"
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(4, 1fr)',
-                gap: '8px',
-                padding: '10px',
-                borderRadius: '16px',
-                backgroundColor: 'var(--bg-primary)',
-                border: '1px solid var(--border-color)'
-              }}
-            >
+            <div className="calculator-keypad animate-entrance">
               {/* Row 1 */}
               <button onClick={() => handleKeypadPress('7')} className="calc-key">7</button>
               <button onClick={() => handleKeypadPress('8')} className="calc-key">8</button>
