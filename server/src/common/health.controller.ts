@@ -120,7 +120,7 @@ export class HealthController {
       await this.prisma.client.create({ data: { name: 'Cliente General', email: 'cliente@example.com', phone: '+505 7777-0000' } }).catch(() => {});
 
       return { seeded: true, users: [admin.email, cashier.email], products: products.length };
-    } catch (e) {
+    } catch (e: any) {
       this.logger.error('Seed error', e);
       return { error: e.message };
     }

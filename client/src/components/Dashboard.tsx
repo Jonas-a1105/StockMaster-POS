@@ -50,6 +50,7 @@ export default function Dashboard({ user, onLogoutSuccess }: DashboardProps) {
   const [isCalculatorOpen, setIsCalculatorOpen] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const prevSyncRef = useRef<SyncState | null>(null);
+  const isManualSyncRef = useRef<boolean>(false);
 
   // isDarkMode derived from ThemeContext
   const isDarkMode = settings.mode === 'dark';
@@ -133,9 +134,10 @@ export default function Dashboard({ user, onLogoutSuccess }: DashboardProps) {
       if (prev?.isSyncing && !state.isSyncing) {
         if (state.error) {
           addToast({ type: 'error', title: 'Error de sincronización', message: state.error });
-        } else {
+        } else if (isManualSyncRef.current) {
           addToast({ type: 'success', title: 'Sincronización completada', message: 'Base de datos actualizada correctamente.' });
         }
+        isManualSyncRef.current = false;
       }
       prevSyncRef.current = state;
       setSyncState(state);
@@ -195,7 +197,10 @@ export default function Dashboard({ user, onLogoutSuccess }: DashboardProps) {
           user={user}
           onlineStatus={onlineStatus}
           syncState={syncState}
-          onSync={() => syncWorker.sync()}
+          onSync={() => {
+            isManualSyncRef.current = true;
+            syncWorker.sync();
+          }}
           onLogout={handleLogout}
           activeTabLabel={headerLabels[activeTab]}
           sidebarExpanded={sidebarExpanded}
@@ -233,34 +238,7 @@ export default function Dashboard({ user, onLogoutSuccess }: DashboardProps) {
           </div>
         )}
 
-        {/* D1: Breadcrumbs / Current Section Indicator */}
-        {activeTab !== 'dashboard' && (
-          <div className="animate-entrance" style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-            padding: '10px 16px',
-            marginTop: '16px',
-            borderRadius: '12px',
-            backgroundColor: 'var(--bg-input)',
-            border: '1px solid var(--border-color)',
-            fontSize: '12px',
-            fontWeight: 600,
-            color: 'var(--text-secondary)',
-            fontFamily: 'var(--font-main)'
-          }}>
-            <span 
-              style={{ cursor: 'pointer', color: 'var(--brand-primary)', fontWeight: 700 }}
-              onClick={() => setActiveTab('dashboard')}
-            >
-              🏠 Inicio
-            </span>
-            <span style={{ color: 'var(--text-muted)', fontSize: '10px' }}>›</span>
-            <span style={{ color: 'var(--text-primary)', fontWeight: 700 }}>
-              {headerLabels[activeTab]}
-            </span>
-          </div>
-        )}
+        {/* D1: Breadcrumbs removed */}
 
         {/* Render modular panels inside the Dashboard grid */}
         <div style={{ padding: '0 0 24px 0', display: 'flex', flexDirection: 'column', gap: '24px' }}>
@@ -296,69 +274,7 @@ export default function Dashboard({ user, onLogoutSuccess }: DashboardProps) {
                   Hola, {user.name.split(' ')[0]}
                 </h1>
 
-                {/* B2: Alertas de Inventario Bajo */}
-                <div className="widget" style={{
-                  padding: '20px',
-                  borderRadius: 'var(--card-radius)',
-                  backgroundColor: 'var(--bg-card)',
-                  border: '1.5px solid var(--border-color)',
-                  boxShadow: 'var(--widget-shadow)',
-                  marginBottom: '24px'
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
-                    <AlertTriangle size={18} style={{ color: '#f59e0b' }} />
-                    <h3 style={{ fontSize: '15px', fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>
-                      ⚠️ Alertas de Inventario Bajo
-                    </h3>
-                  </div>
-
-                  {lowStockProducts.length > 0 ? (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '180px', overflowY: 'auto', paddingRight: '4px' }}>
-                      {lowStockProducts.map(p => (
-                        <div key={p.id} style={{
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          alignItems: 'center',
-                          padding: '10px 14px',
-                          borderRadius: '10px',
-                          backgroundColor: 'rgba(245, 158, 11, 0.08)',
-                          border: '1px solid rgba(245, 158, 11, 0.15)'
-                        }}>
-                          <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{p.name}</span>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Stock Mín: {p.minStock}</span>
-                            <span style={{
-                              fontWeight: 800,
-                              fontSize: '12px',
-                              backgroundColor: p.stock === 0 ? 'rgba(239, 68, 68, 0.15)' : 'rgba(245, 158, 11, 0.15)',
-                              color: p.stock === 0 ? '#ef4444' : '#f59e0b',
-                              padding: '2px 8px',
-                              borderRadius: '50px'
-                            }}>
-                              {p.stock} unidades
-                            </span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      padding: '12px',
-                      borderRadius: '10px',
-                      backgroundColor: 'rgba(16, 185, 129, 0.08)',
-                      border: '1px solid rgba(16, 185, 129, 0.15)',
-                      color: '#10b981',
-                      fontSize: '12.5px',
-                      fontWeight: 600
-                    }}>
-                      <CheckCircle2 size={16} style={{ color: '#10b981' }} />
-                      <span>Todos los productos con stock suficiente</span>
-                    </div>
-                  )}
-                </div>
+                {/* B2: Alertas de Inventario Bajo removed */}
 
                 {/* Notched connected overview widgets */}
                 <OverviewCards totalRevenue={totalRevenue} salesCount={salesCount} productsCount={productsCount} />

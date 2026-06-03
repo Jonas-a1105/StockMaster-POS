@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { DollarSign, Plus, AlertCircle, X, Edit, Trash2 } from 'lucide-react';
 import { getDatabase, type UserDocType } from '../db/database';
+import { API_URL } from '../config';
 
 interface NominaProps {
   user: {
@@ -65,7 +66,7 @@ export default function Nomina({ user, searchTerm = '' }: NominaProps) {
       // Obtener nóminas locales
       const token = localStorage.getItem('auth_token');
       if (token && navigator.onLine) {
-        const response = await fetch('http://localhost:3000/payroll', {
+        const response = await fetch(`${API_URL}/payroll`, {
           headers: { 'Authorization': `Bearer ${token}` }
         });
         if (response.ok) {
@@ -142,7 +143,7 @@ export default function Nomina({ user, searchTerm = '' }: NominaProps) {
       const token = localStorage.getItem('auth_token');
       if (token && navigator.onLine) {
         // Registro en backend
-        const response = await fetch('http://localhost:3000/payroll', {
+        const response = await fetch(`${API_URL}/payroll`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

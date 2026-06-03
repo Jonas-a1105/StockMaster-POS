@@ -201,8 +201,10 @@ export default function RightSidebar({ isDarkMode }: RightSidebarProps) {
 
   return (
     <aside className="right-sidebar">
-      {/* Tarjeta del Comercio POS */}
-      <div className="widget petshop-card">
+      {/* Contenedor Único Combinado del Sidebar */}
+      <div className="widget petshop-card" style={{ display: 'flex', flexDirection: 'column', padding: '24px 20px' }}>
+        
+        {/* SECCIÓN 1: StockMaster POS y Doughnut Chart */}
         <div className="petshop-header">
           <div className="petshop-logo">
             <div className="petshop-logo-inner">
@@ -243,77 +245,84 @@ export default function RightSidebar({ isDarkMode }: RightSidebarProps) {
           </div>
         </div>
         
-        <span className="distributions-text">
+        <span className="distributions-text" style={{ marginBottom: '16px' }}>
           Distribución de cobros por método de pago
         </span>
-      </div>
-      
-      {/* KPIs del Período Real-time */}
-      <div className="widget" style={{ padding: '24px 20px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <div className="dropdown-select" style={{ width: '100%', justifyContent: 'space-between', padding: '10px 16px', borderRadius: '14px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <span style={{ color: '#5e6068' }}>📅</span>
-            <span>Semana: {getWeekRangeString()}</span>
-          </div>
-          <ChevronDown size={14} />
-        </div>
-        
-        <div className="stats-list">
-          <div className="stat-row">
-            <span className="stat-label">Ingresos Totales</span>
-            <span className="stat-value-group">
-              <span>{stats.totalRevenue >= 1000 ? `$ ${(stats.totalRevenue / 1000).toFixed(1)}k` : `$ ${stats.totalRevenue.toFixed(2)}`}</span>
-            </span>
+
+        {/* DIVISOR HORIZONTAL 1 */}
+        <hr style={{ border: 0, borderTop: '1.5px solid var(--border-color)', margin: '20px 0' }} />
+
+        {/* SECCIÓN 2: KPIs del Período Real-time */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          <div className="dropdown-select" style={{ width: '100%', justifyContent: 'space-between', padding: '10px 16px', borderRadius: '14px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <span style={{ color: '#5e6068' }}>📅</span>
+              <span>Semana: {getWeekRangeString()}</span>
+            </div>
+            <ChevronDown size={14} />
           </div>
           
-          <div className="stat-row">
-            <span className="stat-label">Productos Catálogo</span>
-            <span className="stat-value-group">
-              <span>{stats.totalProducts}</span>
-            </span>
-          </div>
-          
-          <div className="stat-row">
-            <span className="stat-label">Stock Alertas</span>
-            <span className="stat-value-group">
-              <span className={stats.lowStockCount > 0 ? "stat-change-positive" : ""} style={{ color: stats.lowStockCount > 0 ? '#ef4444' : 'inherit', backgroundColor: stats.lowStockCount > 0 ? 'rgba(239,68,68,0.1)' : 'transparent', padding: stats.lowStockCount > 0 ? '2px 8px' : '0', borderRadius: '6px' }}>
-                {stats.lowStockCount} bajo stock
+          <div className="stats-list">
+            <div className="stat-row">
+              <span className="stat-label">Ingresos Totales</span>
+              <span className="stat-value-group">
+                <span>{stats.totalRevenue >= 1000 ? `$ ${(stats.totalRevenue / 1000).toFixed(1)}k` : `$ ${stats.totalRevenue.toFixed(2)}`}</span>
               </span>
-            </span>
+            </div>
+            
+            <div className="stat-row">
+              <span className="stat-label">Productos Catálogo</span>
+              <span className="stat-value-group">
+                <span>{stats.totalProducts}</span>
+              </span>
+            </div>
+            
+            <div className="stat-row">
+              <span className="stat-label">Stock Alertas</span>
+              <span className="stat-value-group">
+                <span className={stats.lowStockCount > 0 ? "stat-change-positive" : ""} style={{ color: stats.lowStockCount > 0 ? '#ef4444' : 'inherit', backgroundColor: stats.lowStockCount > 0 ? 'rgba(239,68,68,0.1)' : 'transparent', padding: stats.lowStockCount > 0 ? '2px 8px' : '0', borderRadius: '6px' }}>
+                  {stats.lowStockCount} bajo stock
+                </span>
+              </span>
+            </div>
+            
+            <div className="stat-row">
+              <span className="stat-label">Ventas Locales</span>
+              <span className="stat-value-group">
+                <span>{stats.localSalesCount} tickets</span>
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* DIVISOR HORIZONTAL 2 */}
+        <hr style={{ border: 0, borderTop: '1.5px solid var(--border-color)', margin: '20px 0' }} />
+
+        {/* SECCIÓN 3: Monitoreo en Tiempo Real de Sincronización en la Nube */}
+        <div className="visitors-section" style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+          <div className="visitor-progress-card">
+            <span className="visitor-title">Ventas Sincronizadas (Nube)</span>
+            <span className="visitor-value">{syncMonitor.synced}</span>
+            <div className="visitor-track">
+              <div 
+                className="visitor-fill fill-online" 
+                style={{ width: `${stats.localSalesCount > 0 ? (syncMonitor.synced / stats.localSalesCount) * 100 : 0}%`, transition: 'width 0.4s ease' }}
+              ></div>
+            </div>
           </div>
           
-          <div className="stat-row">
-            <span className="stat-label">Ventas Locales</span>
-            <span className="stat-value-group">
-              <span>{stats.localSalesCount} tickets</span>
-            </span>
+          <div className="visitor-progress-card">
+            <span className="visitor-title">Ventas Offline (Cola local)</span>
+            <span className="visitor-value">{syncMonitor.pending}</span>
+            <div className="visitor-track">
+              <div 
+                className="visitor-fill fill-offline" 
+                style={{ width: `${stats.localSalesCount > 0 ? (syncMonitor.pending / stats.localSalesCount) * 100 : 0}%`, transition: 'width 0.4s ease' }}
+              ></div>
+            </div>
           </div>
         </div>
-      </div>
-      
-      {/* Monitoreo en Tiempo Real de Sincronización en la Nube */}
-      <div className="widget visitors-section">
-        <div className="visitor-progress-card">
-          <span className="visitor-title">Ventas Sincronizadas (Nube)</span>
-          <span className="visitor-value">{syncMonitor.synced}</span>
-          <div className="visitor-track">
-            <div 
-              className="visitor-fill fill-online" 
-              style={{ width: `${stats.localSalesCount > 0 ? (syncMonitor.synced / stats.localSalesCount) * 100 : 0}%`, transition: 'width 0.4s ease' }}
-            ></div>
-          </div>
-        </div>
-        
-        <div className="visitor-progress-card">
-          <span className="visitor-title">Ventas Offline (Cola local)</span>
-          <span className="visitor-value">{syncMonitor.pending}</span>
-          <div className="visitor-track">
-            <div 
-              className="visitor-fill fill-offline" 
-              style={{ width: `${stats.localSalesCount > 0 ? (syncMonitor.pending / stats.localSalesCount) * 100 : 0}%`, transition: 'width 0.4s ease' }}
-            ></div>
-          </div>
-        </div>
+
       </div>
 
       {/* ⚡ Widget de Atajos de Teclado POS (Toglable desde Customizer) */}

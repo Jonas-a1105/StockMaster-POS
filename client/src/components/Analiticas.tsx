@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { useExchangeRate } from '../contexts/ExchangeRateContext';
 import { useToast } from './ToastNotification';
+import { API_URL } from '../config';
 
 interface AnaliticasProps {
   user: {
@@ -89,7 +90,7 @@ export default function Analiticas({ user }: AnaliticasProps) {
       const token = localStorage.getItem('auth_token');
       if (token && navigator.onLine) {
         // Carga KPIs
-        const kpiRes = await fetch('http://localhost:3000/reports/kpis', {
+        const kpiRes = await fetch(`${API_URL}/reports/kpis`, {
           headers: { 'Authorization': `Bearer ${token}` }
         });
         if (kpiRes.ok) {
@@ -101,7 +102,7 @@ export default function Analiticas({ user }: AnaliticasProps) {
         }
 
         // Carga categorías
-        const catRes = await fetch('http://localhost:3000/reports/categories', {
+        const catRes = await fetch(`${API_URL}/reports/categories`, {
           headers: { 'Authorization': `Bearer ${token}` }
         });
         if (catRes.ok) {

@@ -1,7 +1,6 @@
 import * as bcrypt from 'bcryptjs';
 import { getDatabase } from './database';
-
-const API_URL = 'http://localhost:3000';
+import { API_URL } from '../config';
 const TOKEN_REFRESH_MARGIN_MS = 120_000; // Refrescar 2 minutos antes de expirar
 
 let refreshTimer: ReturnType<typeof setTimeout> | null = null;

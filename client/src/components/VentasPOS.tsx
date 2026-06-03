@@ -751,43 +751,7 @@ export default function VentasPOS({ user, searchTerm = '' }: VentasPOSProps) {
       paddingBottom: '30px'
     }}>
 
-      {/* D2: Offline/Online Banner */}
-      {!isOnline ? (
-        <div className="animate-entrance" style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '10px',
-          padding: '12px 20px',
-          marginBottom: '20px',
-          borderRadius: '14px',
-          backgroundColor: 'rgba(245, 158, 11, 0.1)',
-          border: '1.5px solid rgba(245, 158, 11, 0.2)',
-          color: '#f59e0b',
-          fontSize: '12.5px',
-          fontWeight: 700,
-          backdropFilter: 'blur(8px)'
-        }}>
-          <WifiOff size={18} />
-          <span>⚠️ MODO OFFLINE — Las ventas se guardan localmente y se sincronizarán automáticamente al reconectar.</span>
-        </div>
-      ) : (
-        <div className="animate-entrance" style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '8px',
-          padding: '8px 16px',
-          marginBottom: '16px',
-          borderRadius: '12px',
-          backgroundColor: 'rgba(16, 185, 129, 0.06)',
-          border: '1px solid rgba(16, 185, 129, 0.12)',
-          color: '#10b981',
-          fontSize: '11.5px',
-          fontWeight: 600
-        }}>
-          <Wifi size={14} />
-          <span>🟢 Conectado al servidor central — sincronización activa</span>
-        </div>
-      )}
+
 
       <div style={{ 
         display: 'grid', 

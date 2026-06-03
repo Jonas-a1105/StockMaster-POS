@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Mail, Lock, Wifi, WifiOff, Sun, Moon, AlertTriangle, Eye, EyeOff } from 'lucide-react';
 import { loginOnline, loginOffline, isOnline } from '../db/auth';
+import { API_URL } from '../config';
 import logoImg from '../assets/logo.png';
 
 interface LoginProps {
@@ -88,9 +89,39 @@ export default function Login({ onLoginSuccess, onNavigateToRegister }: LoginPro
 
         if (onlineStatus) {
           // A. Intenta Login Online Centralizado
-          const res = await loginOnline(email, password);
-          setSuccessMsg('¡Conexión Online Establecida! Sesión autorizada.');
-          setTimeout(() => onLoginSuccess(res.user), 1000);
+          try {
+            const res = await loginOnline(email, password);
+            setSuccessMsg('¡Conexión Online Establecida! Sesión autorizada.');
+            setTimeout(() => onLoginSuccess(res.user), 1000);
+          } catch (onlineErr: any) {
+            console.warn('Fallo de login online, intentando offline local...', onlineErr);
+            // Si el error es de conexión de red o un error del servidor (no credenciales incorrectas)
+            const isNetworkOrServerError = 
+              !navigator.onLine ||
+              onlineErr.message === 'Failed to fetch' || 
+              onlineErr.message?.includes('NetworkError') || 
+              onlineErr.message?.includes('network') ||
+              onlineErr.message?.includes('connect') ||
+              onlineErr.message?.includes('fetch') ||
+              onlineErr.message?.includes('server') ||
+              onlineErr.message?.includes('Internal Server Error') ||
+              onlineErr.message?.includes('500') ||
+              onlineErr.message?.includes('502') ||
+              onlineErr.message?.includes('503') ||
+              onlineErr.message?.includes('504');
+
+            if (isNetworkOrServerError) {
+              try {
+                const res = await loginOffline(email, password, false);
+                setSuccessMsg('🔌 Servidor central inaccesible. Iniciando sesión local protegida.');
+                setTimeout(() => onLoginSuccess(res.user), 1500);
+              } catch (offlineErr: any) {
+                throw new Error(offlineErr.message || 'Error en las credenciales proporcionadas localmente.');
+              }
+            } else {
+              throw onlineErr; // Credenciales inválidas u otro error de autenticación explícito
+            }
+          }
         } else {
           // B. Fallback a Validación Local en IndexedDB
           const res = await loginOffline(email, password, false);
@@ -108,7 +139,7 @@ export default function Login({ onLoginSuccess, onNavigateToRegister }: LoginPro
         if (onlineStatus) {
           // Verifica el PIN en el servidor o local si falla
           try {
-            const response = await fetch('http://localhost:3000/auth/login-offline', {
+            const response = await fetch(`${API_URL}/auth/login-offline`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ email, pin })
@@ -120,9 +151,14 @@ export default function Login({ onLoginSuccess, onNavigateToRegister }: LoginPro
               setSuccessMsg('¡PIN verificado online con éxito!');
               setTimeout(() => onLoginSuccess(data.user), 1000);
               return;
+            } else if (response.status === 400 || response.status === 401) {
+              throw new Error(data.message || 'PIN o usuario incorrecto.');
             }
-          } catch (err) {
-            console.warn('Fallo de PIN online, intentando offline local...');
+          } catch (err: any) {
+            console.warn('Fallo de PIN online, intentando offline local...', err);
+            if (err.message === 'PIN o usuario incorrecto.') {
+              throw err;
+            }
           }
         }
         

@@ -1,7 +1,6 @@
 import { getDatabase } from './database';
+import { API_URL } from '../config';
 import { getValidToken } from './auth';
-
-const API_URL = 'http://localhost:3000';
 
 export interface SyncState {
   isSyncing: boolean;

@@ -5,7 +5,7 @@ const MIGRATION_FLAG_KEY = 'stockmaster_local_db_migrated_v2';
 export async function migrateLocalStorageToRxDB(db: StockMasterDatabase) {
   if (localStorage.getItem(MIGRATION_FLAG_KEY) === 'true') return;
 
-  const migrations: Promise<void>[] = [];
+  const migrations: Promise<any>[] = [];
 
   // 1. Migrate suppliers
   try {

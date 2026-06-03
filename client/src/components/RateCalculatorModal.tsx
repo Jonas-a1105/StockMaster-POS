@@ -8,7 +8,7 @@ interface RateCalculatorModalProps {
 }
 
 export default function RateCalculatorModal({ isOpen, onClose }: RateCalculatorModalProps) {
-  const { dolarRate } = useExchangeRate();
+  const { dolarRate, isManual, updateRate, resetToLiveRate } = useExchangeRate();
   const eurRate = dolarRate * 1.085; // Standard market cross-rate approx
 
   const [isComplexView, setIsComplexView] = useState<boolean>(false);
@@ -22,6 +22,19 @@ export default function RateCalculatorModal({ isOpen, onClose }: RateCalculatorM
   // Math expression state for complex calculator mode
   const [expression, setExpression] = useState<string>('');
   const [evaluatedResult, setEvaluatedResult] = useState<number | null>(null);
+
+  const [editingRate, setEditingRate] = useState<string>('');
+
+  useEffect(() => {
+    setEditingRate(dolarRate.toString());
+  }, [dolarRate]);
+
+  const handleSaveRate = () => {
+    const val = parseFloat(editingRate);
+    if (!isNaN(val) && val > 0) {
+      updateRate(val);
+    }
+  };
 
   // Sync inputs helper when one currency changes
   const updateAllCurrencies = (value: number, source: 'USD' | 'VES' | 'EUR') => {
@@ -201,8 +214,8 @@ export default function RateCalculatorModal({ isOpen, onClose }: RateCalculatorM
           <div style={{
             padding: '12px 14px',
             borderRadius: '16px',
-            border: '1.5px solid rgba(251, 191, 36, 0.2)',
-            backgroundColor: 'rgba(251, 191, 36, 0.05)',
+            border: isManual ? '1.5px solid rgba(168, 85, 247, 0.25)' : '1.5px solid rgba(251, 191, 36, 0.2)',
+            backgroundColor: isManual ? 'rgba(168, 85, 247, 0.05)' : 'rgba(251, 191, 36, 0.05)',
             color: 'var(--text-secondary)',
             fontSize: '12px',
             display: 'flex',
@@ -211,14 +224,96 @@ export default function RateCalculatorModal({ isOpen, onClose }: RateCalculatorM
           }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <span style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: '5px' }}>
-                <Coins size={14} style={{ color: 'var(--brand-gold)' }} />
-                Tasa BCV Oficial:
+                <Coins size={14} style={{ color: isManual ? '#a855f7' : 'var(--brand-gold)' }} />
+                {isManual ? 'Tasa Manual Personalizada:' : 'Tasa BCV Oficial:'}
               </span>
-              <strong style={{ color: 'var(--brand-gold)', fontSize: '13px' }}>Bs. {dolarRate.toFixed(2)}</strong>
+              <strong style={{ color: isManual ? '#a855f7' : 'var(--brand-gold)', fontSize: '13px' }}>Bs. {dolarRate.toFixed(2)}</strong>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: '1px solid rgba(251, 191, 36, 0.1)', paddingTop: '4px', marginTop: '2px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: isManual ? '1px solid rgba(168, 85, 247, 0.1)' : '1px solid rgba(251, 191, 36, 0.1)', paddingTop: '4px', marginTop: '2px' }}>
               <span style={{ fontWeight: 500, opacity: 0.85 }}>Referencia EUR:</span>
               <span style={{ fontWeight: 700, opacity: 0.9 }}>Bs. {eurRate.toFixed(2)} <span style={{ fontSize: '10px', opacity: 0.7 }}>(1.085 USD)</span></span>
+            </div>
+          </div>
+
+          {/* Ajuste Manual de Tasa de Cambio */}
+          <div style={{
+            padding: '12px 14px',
+            borderRadius: '16px',
+            border: '1.2px solid var(--border-color)',
+            backgroundColor: 'var(--bg-primary)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '10px'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: '10.5px', fontWeight: 800, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.3px' }}>
+                Ajustar Tasa de Cambio
+              </span>
+              {isManual && (
+                <button
+                  type="button"
+                  onClick={resetToLiveRate}
+                  style={{
+                    padding: '2px 8px',
+                    borderRadius: '6px',
+                    border: 'none',
+                    backgroundColor: 'rgba(14, 165, 164, 0.12)',
+                    color: 'var(--brand-teal)',
+                    fontSize: '10px',
+                    fontWeight: 800,
+                    cursor: 'pointer',
+                    transition: 'all 0.2s'
+                  }}
+                  title="Restablecer la tasa oficial BCV obtenida automáticamente por internet"
+                >
+                  Restablecer BCV
+                </button>
+              )}
+            </div>
+            
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <div style={{ position: 'relative', flex: 1 }}>
+                <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', fontSize: '12px', fontWeight: 800, color: 'var(--text-muted)' }}>Bs.</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="1"
+                  value={editingRate}
+                  onChange={(e) => setEditingRate(e.target.value)}
+                  placeholder={dolarRate.toFixed(2)}
+                  style={{
+                    width: '100%',
+                    padding: '8px 12px 8px 36px',
+                    borderRadius: '10px',
+                    border: '1.2px solid var(--border-color)',
+                    backgroundColor: 'var(--bg-input)',
+                    color: 'var(--text-primary)',
+                    fontSize: '13px',
+                    fontWeight: 700,
+                    outline: 'none',
+                    transition: 'all 0.2s'
+                  }}
+                  className="glass-input"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={handleSaveRate}
+                style={{
+                  padding: '8px 16px',
+                  borderRadius: '10px',
+                  border: 'none',
+                  backgroundColor: 'var(--brand-teal)',
+                  color: '#060608',
+                  fontSize: '12px',
+                  fontWeight: 800,
+                  cursor: 'pointer',
+                  transition: 'all 0.2s'
+                }}
+                className="login-btn-gradient"
+              >
+                Guardar
+              </button>
             </div>
           </div>
 

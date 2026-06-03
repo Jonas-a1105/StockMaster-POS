@@ -47,7 +47,7 @@ export default function Header({
   onOpenCalculator,
   onSelectResult
 }: HeaderProps) {
-  const { dolarRate } = useExchangeRate();
+  const { dolarRate, isManual } = useExchangeRate();
   const [localInput, setLocalInput] = useState('');
   const [results, setResults] = useState<Array<{ type: string; id: string; name: string; details: string; tab: 'inventario' | 'clientes' | 'proveedores' | 'nomina' }>>([]);
   const [showDropdown, setShowDropdown] = useState(false);
@@ -236,10 +236,15 @@ export default function Header({
         <div 
           className="rate-badge animate-entrance"
           onClick={onOpenCalculator}
-          title="Tasa de cambio oficial BCV en Venezuela. ¡Haz clic para abrir la calculadora!"
+          style={isManual ? {
+            borderColor: 'rgba(168, 85, 247, 0.35)',
+            backgroundColor: 'rgba(168, 85, 247, 0.06)',
+            color: '#a855f7'
+          } : undefined}
+          title={isManual ? "Tasa establecida manualmente. ¡Haz clic para abrir la calculadora/ajustar!" : "Tasa oficial BCV en tiempo real. ¡Haz clic para abrir la calculadora/ajustar!"}
         >
           <span style={{ fontSize: '12px' }}>🪙</span>
-          <span><span className="hide-mobile">Tasa BCV: </span><strong>Bs. {dolarRate.toFixed(2)}</strong></span>
+          <span><span className="hide-mobile">Tasa {isManual ? 'Manual' : 'BCV'}: </span><strong>Bs. {dolarRate.toFixed(2)}</strong></span>
         </div>
 
         {/* Network & Offline Status Indicator */}

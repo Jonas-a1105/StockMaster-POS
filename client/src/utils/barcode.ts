@@ -52,7 +52,9 @@ export async function startBarcodeScanner(
 export function stopBarcodeScanner(): void {
   if (scanner) {
     scanner.stop().catch(() => {});
-    scanner.clear().catch(() => {});
+    try {
+      scanner.clear();
+    } catch { /* ignore */ }
   }
 }
 

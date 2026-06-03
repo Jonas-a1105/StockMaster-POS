@@ -14,6 +14,7 @@ import {
   Wifi,
   ArrowRight
 } from 'lucide-react';
+import { API_URL } from '../config';
 
 interface AuditoriaProps {
   user: {
@@ -151,7 +152,7 @@ export default function Auditoria({ user }: AuditoriaProps) {
       let serverLogs: AuditLog[] = [];
       const token = localStorage.getItem('auth_token');
       if (token && navigator.onLine) {
-        const logsRes = await fetch('http://localhost:3000/reports/audit-logs?limit=40', {
+        const logsRes = await fetch(`${API_URL}/reports/audit-logs?limit=40`, {
           headers: { 'Authorization': `Bearer ${token}` }
         });
         if (logsRes.ok) {
@@ -337,7 +338,7 @@ export default function Auditoria({ user }: AuditoriaProps) {
               <Server size={24} style={{ color: 'var(--brand-gold)' }} />
               <div>
                 <strong style={{ fontSize: '14px', display: 'block', color: 'var(--text-primary)' }}>NestJS + PostgreSQL</strong>
-                <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>http://localhost:3000. Activo</span>
+                <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{API_URL}. Activo</span>
               </div>
             </div>
             <div style={{ borderTop: '1px solid var(--border-color)', marginTop: '12px', paddingTop: '8px', display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: 'var(--text-muted)' }}>

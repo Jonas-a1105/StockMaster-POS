@@ -109,7 +109,7 @@ export function printTicket(ticket: TicketData): void {
 
 export async function printViaWebUSB(ticket: TicketData): Promise<void> {
   try {
-    const device = await navigator.usb.requestDevice({
+    const device = await (navigator as any).usb.requestDevice({
       filters: [
         { vendorId: 0x0416 }, // BIXOLON
         { vendorId: 0x04b8 }, // EPSON
@@ -121,7 +121,7 @@ export async function printViaWebUSB(ticket: TicketData): Promise<void> {
     await device.claimInterface(0);
 
     const encoder = new TextEncoder();
-    const text = `\x1b\x40` + // Reset printer
+    let text = `\x1b\x40` + // Reset printer
       `\x1b\x61\x01` + // Center align
       `\x1b\x21\x30` + // Double height + width
       `${ticket.businessName}\n` +
@@ -131,13 +131,13 @@ export async function printViaWebUSB(ticket: TicketData): Promise<void> {
       `${ticket.date}\n` +
       `\x1b\x61\x00` + // Left align
       `Cajero: ${ticket.cashier}\n` +
-      `─'.repeat(32)}\n`;
+      `${'─'.repeat(32)}\n`;
 
     ticket.items.forEach((item) => {
       text += `${item.name} x${item.qty}  $${item.total.toFixed(2)}\n`;
     });
 
-    text += `─'.repeat(32)}\n`;
+    text += `${'─'.repeat(32)}\n`;
     text += `TOTAL: $${ticket.total.toFixed(2)}\n\n`;
     text += `\x1d\x56\x00`; // Cut paper
 
