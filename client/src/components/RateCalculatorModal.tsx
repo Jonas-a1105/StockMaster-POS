@@ -164,23 +164,10 @@ export default function RateCalculatorModal({ isOpen, onClose }: RateCalculatorM
   const presetsUSD = [1, 5, 10, 20, 50, 100, 200, 500];
 
   return (
-    <div className="modal-backdrop active" style={{ zIndex: 1400 }} onClick={onClose}>
+    <div className="modal-backdrop active" onClick={onClose}>
       <div 
         className="calculator-modal-body" 
         onClick={(e) => e.stopPropagation()}
-        style={{
-          width: '95%',
-          maxWidth: '480px',
-          backgroundColor: 'var(--bg-card)',
-          borderRadius: 'var(--card-radius)',
-          boxShadow: 'var(--card-shadow)',
-          border: '1.5px solid var(--border-color)',
-          overflow: 'hidden',
-          display: 'flex',
-          flexDirection: 'column',
-          maxHeight: '90vh',
-          animation: 'modalSlideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards'
-        }}
       >
         {/* Header */}
         <div style={{
