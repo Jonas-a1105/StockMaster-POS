@@ -4081,5 +4081,147 @@ body.light-theme .calc-key:hover {
   border: 1px solid var(--border-color);
 }
 
+/* --- Calculator styles refactored from inline styles --- */
+.calculator-scroll-container {
+  overflow-y: auto;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  flex: 1;
+}
+
+.calculator-rate-banner {
+  padding: 12px 14px;
+  border-radius: 16px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.calculator-rate-banner.manual {
+  border: 1.5px solid rgba(168, 85, 247, 0.25);
+  background-color: rgba(168, 85, 247, 0.05);
+}
+
+.calculator-rate-banner.official {
+  border: 1.5px solid rgba(251, 191, 36, 0.2);
+  background-color: rgba(251, 191, 36, 0.05);
+}
+
+.calculator-adjust-section {
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1.2px solid var(--border-color);
+  background-color: var(--bg-primary);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.calculator-toggle-mode {
+  display: flex;
+  background-color: var(--bg-primary);
+  padding: 4px;
+  border-radius: 12px;
+  border: 1px solid var(--border-color);
+}
+
+.calculator-toggle-btn {
+  flex: 1;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: none;
+  background-color: transparent;
+  color: var(--text-secondary);
+  font-weight: 500;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.calculator-toggle-btn.active {
+  background-color: var(--bg-card) !important;
+  color: var(--brand-primary) !important;
+  font-weight: 700 !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1) !important;
+}
+
+.calculator-inputs-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.calculator-input-row {
+  padding: 10px 12px;
+  border-radius: 14px;
+  background-color: var(--bg-primary);
+  border: 1.5px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.calculator-input-row.focused {
+  background-color: var(--brand-primary-light) !important;
+  border-color: var(--brand-primary) !important;
+}
+
+/* --- Mobile specific overrides for Calculator (Slide-panel & compactness) --- */
+@media screen and (max-width: 768px) {
+  .calculator-scroll-container {
+    padding: 12px 14px !important;
+    gap: 10px !important;
+  }
+
+  .calculator-rate-banner {
+    padding: 8px 10px !important;
+    border-radius: 12px !important;
+    font-size: 11px !important;
+  }
+
+  .calculator-adjust-section {
+    padding: 8px 10px !important;
+    border-radius: 12px !important;
+    gap: 6px !important;
+  }
+
+  .calculator-toggle-mode {
+    border-radius: 10px !important;
+    padding: 3px !important;
+  }
+
+  .calculator-toggle-btn {
+    padding: 6px 10px !important;
+    font-size: 11px !important;
+    border-radius: 6px !important;
+  }
+
+  .calculator-inputs-group {
+    gap: 6px !important;
+  }
+
+  .calculator-input-row {
+    padding: 8px 10px !important;
+    border-radius: 10px !important;
+  }
+
+  .calc-key {
+    height: 36px !important;
+    font-size: 13px !important;
+    border-radius: 6px !important;
+  }
+
+  .hide-on-mobile-complex {
+    display: none !important;
+  }
+}
+
+
 
 

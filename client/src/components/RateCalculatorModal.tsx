@@ -195,20 +195,10 @@ export default function RateCalculatorModal({ isOpen, onClose }: RateCalculatorM
         </div>
 
         {/* Scrollable Content */}
-        <div style={{ overflowY: 'auto', padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '16px', flex: 1 }}>
+        <div className="calculator-scroll-container">
           
           {/* Rate Banner */}
-          <div style={{
-            padding: '12px 14px',
-            borderRadius: '16px',
-            border: isManual ? '1.5px solid rgba(168, 85, 247, 0.25)' : '1.5px solid rgba(251, 191, 36, 0.2)',
-            backgroundColor: isManual ? 'rgba(168, 85, 247, 0.05)' : 'rgba(251, 191, 36, 0.05)',
-            color: 'var(--text-secondary)',
-            fontSize: '12px',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '4px'
-          }}>
+          <div className={`calculator-rate-banner ${isManual ? 'manual' : 'official'}`}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <span style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: '5px' }}>
                 <Coins size={14} style={{ color: isManual ? '#a855f7' : 'var(--brand-gold)' }} />
@@ -223,15 +213,7 @@ export default function RateCalculatorModal({ isOpen, onClose }: RateCalculatorM
           </div>
 
           {/* Ajuste Manual de Tasa de Cambio */}
-          <div style={{
-            padding: '12px 14px',
-            borderRadius: '16px',
-            border: '1.2px solid var(--border-color)',
-            backgroundColor: 'var(--bg-primary)',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '10px'
-          }}>
+          <div className="calculator-adjust-section">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span style={{ fontSize: '10.5px', fontWeight: 800, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.3px' }}>
                 Ajustar Tasa de Cambio
@@ -305,67 +287,27 @@ export default function RateCalculatorModal({ isOpen, onClose }: RateCalculatorM
           </div>
 
           {/* Toggle View Mode */}
-          <div style={{
-            display: 'flex',
-            backgroundColor: 'var(--bg-primary)',
-            padding: '4px',
-            borderRadius: '12px',
-            border: '1px solid var(--border-color)'
-          }}>
+          <div className="calculator-toggle-mode">
             <button
               onClick={() => setIsComplexView(false)}
-              style={{
-                flex: 1,
-                padding: '8px 12px',
-                borderRadius: '8px',
-                border: 'none',
-                backgroundColor: !isComplexView ? 'var(--bg-card)' : 'transparent',
-                color: !isComplexView ? 'var(--brand-primary)' : 'var(--text-secondary)',
-                fontWeight: !isComplexView ? 700 : 500,
-                fontSize: '12px',
-                cursor: 'pointer',
-                boxShadow: !isComplexView ? '0 2px 8px rgba(0,0,0,0.1)' : 'none',
-                transition: 'all 0.2s ease'
-              }}
+              className={`calculator-toggle-btn ${!isComplexView ? 'active' : ''}`}
             >
               Conversor Simple
             </button>
             <button
               onClick={() => setIsComplexView(true)}
-              style={{
-                flex: 1,
-                padding: '8px 12px',
-                borderRadius: '8px',
-                border: 'none',
-                backgroundColor: isComplexView ? 'var(--bg-card)' : 'transparent',
-                color: isComplexView ? 'var(--brand-primary)' : 'var(--text-secondary)',
-                fontWeight: isComplexView ? 700 : 500,
-                fontSize: '12px',
-                cursor: 'pointer',
-                boxShadow: isComplexView ? '0 2px 8px rgba(0,0,0,0.1)' : 'none',
-                transition: 'all 0.2s ease'
-              }}
+              className={`calculator-toggle-btn ${isComplexView ? 'active' : ''}`}
             >
               Teclado de Fórmulas
             </button>
           </div>
 
           {/* Input Fields */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          <div className="calculator-inputs-group">
             
             {/* USD Input */}
             <div 
-              style={{
-                padding: '10px 12px',
-                borderRadius: '14px',
-                backgroundColor: activeCurrency === 'USD' && isComplexView ? 'var(--brand-primary-light)' : 'var(--bg-primary)',
-                border: `1.5px solid ${activeCurrency === 'USD' && isComplexView ? 'var(--brand-primary)' : 'var(--border-color)'}`,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                transition: 'all 0.2s ease',
-                cursor: 'pointer'
-              }}
+              className={`calculator-input-row currency-usd ${activeCurrency === 'USD' && isComplexView ? 'focused' : ''}`}
               onClick={() => selectActiveCurrency('USD')}
             >
               <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
@@ -401,17 +343,7 @@ export default function RateCalculatorModal({ isOpen, onClose }: RateCalculatorM
 
             {/* VES Input */}
             <div 
-              style={{
-                padding: '10px 12px',
-                borderRadius: '14px',
-                backgroundColor: activeCurrency === 'VES' && isComplexView ? 'var(--brand-primary-light)' : 'var(--bg-primary)',
-                border: `1.5px solid ${activeCurrency === 'VES' && isComplexView ? 'var(--brand-primary)' : 'var(--border-color)'}`,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                transition: 'all 0.2s ease',
-                cursor: 'pointer'
-              }}
+              className={`calculator-input-row currency-ves ${activeCurrency === 'VES' && isComplexView ? 'focused' : ''}`}
               onClick={() => selectActiveCurrency('VES')}
             >
               <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
@@ -447,17 +379,7 @@ export default function RateCalculatorModal({ isOpen, onClose }: RateCalculatorM
 
             {/* EUR Input */}
             <div 
-              style={{
-                padding: '10px 12px',
-                borderRadius: '14px',
-                backgroundColor: activeCurrency === 'EUR' && isComplexView ? 'var(--brand-primary-light)' : 'var(--bg-primary)',
-                border: `1.5px solid ${activeCurrency === 'EUR' && isComplexView ? 'var(--brand-primary)' : 'var(--border-color)'}`,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                transition: 'all 0.2s ease',
-                cursor: 'pointer'
-              }}
+              className={`calculator-input-row currency-eur ${activeCurrency === 'EUR' && isComplexView ? 'focused' : ''}`}
               onClick={() => selectActiveCurrency('EUR')}
             >
               <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
@@ -562,12 +484,15 @@ export default function RateCalculatorModal({ isOpen, onClose }: RateCalculatorM
           )}
 
           {/* Quick lookup Conversion Table */}
-          <div style={{
-            borderRadius: '16px',
-            border: '1px solid var(--border-color)',
-            overflow: 'hidden',
-            backgroundColor: 'var(--bg-primary)'
-          }}>
+          <div 
+            className={`calculator-preset-table-card ${isComplexView ? 'hide-on-mobile-complex' : ''}`}
+            style={{
+              borderRadius: '16px',
+              border: '1px solid var(--border-color)',
+              overflow: 'hidden',
+              backgroundColor: 'var(--bg-primary)'
+            }}
+          >
             <div style={{
               padding: '10px 14px',
               backgroundColor: 'rgba(255, 255, 255, 0.02)',
