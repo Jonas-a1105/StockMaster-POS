@@ -1,11 +1,35 @@
 import { useState, useEffect } from 'react';
-import { Search, Plus, Sparkles, Check, X, AlertTriangle, AlertCircle, Edit, Trash2, ShoppingBag, RefreshCw, Info, History } from 'lucide-react';
+import { Search, Plus, Sparkles, Check, X, AlertTriangle, AlertCircle, Edit, Trash2, ShoppingBag, RefreshCw, Info, History, TrendingUp } from 'lucide-react';
 import { getDatabase, type ProductDocType } from '../db/database';
 import { syncWorker } from '../db/sync';
 import { useExchangeRate } from '../contexts/ExchangeRateContext';
+import { useTheme } from '../contexts/ThemeContext';
 import CustomSelect from './CustomSelect';
 import { logAuditEvent } from '../utils/audit';
 import CustomDatePicker from './CustomDatePicker';
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  Tooltip,
+  Legend,
+  Filler
+} from 'chart.js';
+import { Line } from 'react-chartjs-2';
+
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  Tooltip,
+  Legend,
+  Filler
+);
 
 
 interface InventarioProps {
@@ -26,6 +50,8 @@ interface CustomProduct extends ProductDocType {
 export default function Inventario({ searchTerm = '', user }: InventarioProps) {
   const isAdmin = user.role === 'ADMIN';
   const { convertToVES, formatVES, formatUSD } = useExchangeRate();
+  const { settings } = useTheme();
+  const isDarkMode = settings?.mode === 'dark';
   const [products, setProducts] = useState<CustomProduct[]>([]);
   const [localSearchTerm, setLocalSearchTerm] = useState('');
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -56,6 +82,8 @@ export default function Inventario({ searchTerm = '', user }: InventarioProps) {
   const [showKardexModal, setShowKardexModal] = useState(false);
   const [kardexProduct, setKardexProduct] = useState<CustomProduct | null>(null);
   const [kardexMovements, setKardexMovements] = useState<any[]>([]);
+  const [kardexTab, setKardexTab] = useState<'stock' | 'cost'>('stock');
+  const [costHistory, setCostHistory] = useState<any[]>([]);
   const [showBulkModal, setShowBulkModal] = useState(false);
   const [csvPreview, setCsvPreview] = useState<any[]>([]);
   const [csvErrors, setCsvErrors] = useState<string[]>([]);
@@ -516,6 +544,42 @@ export default function Inventario({ searchTerm = '', user }: InventarioProps) {
       
       movementsWithBalance.reverse();
       setKardexMovements(movementsWithBalance);
+
+      setKardexTab('stock');
+      
+      const supplierDocs = await db.suppliers.find().exec();
+      const supplierMap = new Map(supplierDocs.map(d => [d.get('id') || d.id, d.get('companyName')]));
+
+      const productPurchasesSorted = [...productPurchases].sort(
+        (a, b) => new Date(a.createdAt || '').getTime() - new Date(b.createdAt || '').getTime()
+      );
+      
+      let tempCostHistory: any[] = [];
+      productPurchasesSorted.forEach(purchase => {
+        const item = purchase.items.find((i: any) => i.productId === prod.id);
+        if (item) {
+          tempCostHistory.push({
+            date: purchase.createdAt,
+            invoiceNumber: purchase.invoiceNumber || 'S/N',
+            supplierName: supplierMap.get(purchase.supplierId) || 'Proveedor General',
+            costUSD: item.cost || 0,
+          });
+        }
+      });
+      
+      const finalCostHistory = tempCostHistory.map((entry, idx) => {
+        let pctChange = 0;
+        if (idx > 0) {
+          const prevCost = tempCostHistory[idx - 1].costUSD;
+          pctChange = prevCost > 0 ? ((entry.costUSD - prevCost) / prevCost) * 100 : 0;
+        }
+        return {
+          ...entry,
+          pctChange
+        };
+      });
+      
+      setCostHistory(finalCostHistory);
     } catch (err) {
       console.error('Error al cargar kárdex:', err);
     }
@@ -1959,54 +2023,280 @@ export default function Inventario({ searchTerm = '', user }: InventarioProps) {
                 </div>
               </div>
 
-              <div style={{ overflowX: 'auto', border: '1px solid var(--border-color)', borderRadius: '12px' }}>
-                <table style={{ width: '100%', fontSize: '12px', borderCollapse: 'collapse' }}>
-                  <thead>
-                    <tr style={{ color: 'var(--text-secondary)', textAlign: 'left', borderBottom: '1.5px solid var(--border-color)', backgroundColor: 'var(--bg-input)' }}>
-                      <th style={{ padding: '10px 12px', fontWeight: 800 }}>FECHA / HORA</th>
-                      <th style={{ padding: '10px 12px', fontWeight: 800 }}>TIPO</th>
-                      <th style={{ padding: '10px 12px', fontWeight: 800 }}>REFERENCIA</th>
-                      <th style={{ padding: '10px 12px', fontWeight: 800, textAlign: 'right' }}>CANT.</th>
-                      <th style={{ padding: '10px 12px', fontWeight: 800, textAlign: 'right' }}>RESULTANTE</th>
-                      <th style={{ padding: '10px 12px', fontWeight: 800 }}>USUARIO</th>
-                      <th style={{ padding: '10px 12px', fontWeight: 800 }}>DETALLE / MOTIVO</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {kardexMovements.length === 0 ? (
-                      <tr>
-                        <td colSpan={7} style={{ textAlign: 'center', padding: '30px', color: 'var(--text-secondary)' }}>
-                          No hay movimientos registrados para este producto.
-                        </td>
-                      </tr>
-                    ) : (
-                      kardexMovements.map((mov, index) => {
-                        const isNegative = mov.qtyChange < 0;
-                        const isCreation = mov.type === 'CREACIÓN';
-                        return (
-                          <tr key={index} style={{ borderBottom: '1px solid var(--border-color)' }}>
-                            <td style={{ padding: '10px 12px', whiteSpace: 'nowrap', fontFamily: 'monospace' }}>
-                              {new Date(mov.date).toLocaleString()}
-                            </td>
-                            <td style={{ padding: '10px 12px' }}>
-                              <span className={`status-badge ${isCreation ? 'delivered' : isNegative ? 'shipped' : 'pickup'}`} style={{ fontSize: '10px' }}>
-                                {mov.type}
-                              </span>
-                            </td>
-                            <td style={{ padding: '10px 12px', fontFamily: 'monospace' }}>{mov.reference}</td>
-                            <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 800, color: isNegative ? '#ef4444' : '#22c55e' }}>
-                              {isNegative ? '' : '+'}{mov.qtyChange}
-                            </td>
-                            <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 800 }}>{mov.resultStock}</td>
-                            <td style={{ padding: '10px 12px', color: 'var(--text-secondary)' }}>{mov.user}</td>
-                            <td style={{ padding: '10px 12px', color: 'var(--text-muted)' }}>{mov.justification}</td>
-                          </tr>
-                        );
-                      })
-                    )}
-                  </tbody>
-                </table>
+              {/* Tabs switcher */}
+              <div style={{ display: 'flex', gap: '8px', borderBottom: '1px solid var(--border-color)', paddingBottom: '10px', marginBottom: '4px' }}>
+                <button
+                  type="button"
+                  onClick={() => setKardexTab('stock')}
+                  style={{
+                    padding: '8px 16px',
+                    borderRadius: '8px',
+                    border: 'none',
+                    fontWeight: 700,
+                    fontSize: '13px',
+                    cursor: 'pointer',
+                    backgroundColor: kardexTab === 'stock' ? 'var(--bg-input)' : 'transparent',
+                    color: kardexTab === 'stock' ? 'var(--brand-primary)' : 'var(--text-secondary)',
+                    transition: 'all 0.2s ease',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px'
+                  }}
+                >
+                  <History size={14} />
+                  Historial de Stock
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setKardexTab('cost')}
+                  style={{
+                    padding: '8px 16px',
+                    borderRadius: '8px',
+                    border: 'none',
+                    fontWeight: 700,
+                    fontSize: '13px',
+                    cursor: 'pointer',
+                    backgroundColor: kardexTab === 'cost' ? 'var(--bg-input)' : 'transparent',
+                    color: kardexTab === 'cost' ? 'var(--brand-primary)' : 'var(--text-secondary)',
+                    transition: 'all 0.2s ease',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px'
+                  }}
+                >
+                  <TrendingUp size={14} />
+                  Historial de Costos
+                </button>
               </div>
+
+              {kardexTab === 'stock' ? (
+                <div style={{ overflowX: 'auto', border: '1px solid var(--border-color)', borderRadius: '12px' }}>
+                  <table style={{ width: '100%', fontSize: '12px', borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr style={{ color: 'var(--text-secondary)', textAlign: 'left', borderBottom: '1.5px solid var(--border-color)', backgroundColor: 'var(--bg-input)' }}>
+                        <th style={{ padding: '10px 12px', fontWeight: 800 }}>FECHA / HORA</th>
+                        <th style={{ padding: '10px 12px', fontWeight: 800 }}>TIPO</th>
+                        <th style={{ padding: '10px 12px', fontWeight: 800 }}>REFERENCIA</th>
+                        <th style={{ padding: '10px 12px', fontWeight: 800, textAlign: 'right' }}>CANT.</th>
+                        <th style={{ padding: '10px 12px', fontWeight: 800, textAlign: 'right' }}>RESULTANTE</th>
+                        <th style={{ padding: '10px 12px', fontWeight: 800 }}>USUARIO</th>
+                        <th style={{ padding: '10px 12px', fontWeight: 800 }}>DETALLE / MOTIVO</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {kardexMovements.length === 0 ? (
+                        <tr>
+                          <td colSpan={7} style={{ textAlign: 'center', padding: '30px', color: 'var(--text-secondary)' }}>
+                            No hay movimientos registrados para este producto.
+                          </td>
+                        </tr>
+                      ) : (
+                        kardexMovements.map((mov, index) => {
+                          const isNegative = mov.qtyChange < 0;
+                          const isCreation = mov.type === 'CREACIÓN';
+                          return (
+                            <tr key={index} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                              <td style={{ padding: '10px 12px', whiteSpace: 'nowrap', fontFamily: 'monospace' }}>
+                                {new Date(mov.date).toLocaleString()}
+                              </td>
+                              <td style={{ padding: '10px 12px' }}>
+                                <span className={`status-badge ${isCreation ? 'delivered' : isNegative ? 'shipped' : 'pickup'}`} style={{ fontSize: '10px' }}>
+                                  {mov.type}
+                                </span>
+                              </td>
+                              <td style={{ padding: '10px 12px', fontFamily: 'monospace' }}>{mov.reference}</td>
+                              <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 800, color: isNegative ? '#ef4444' : '#22c55e' }}>
+                                {isNegative ? '' : '+'}{mov.qtyChange}
+                              </td>
+                              <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 800 }}>{mov.resultStock}</td>
+                              <td style={{ padding: '10px 12px', color: 'var(--text-secondary)' }}>{mov.user}</td>
+                              <td style={{ padding: '10px 12px', color: 'var(--text-muted)' }}>{mov.justification}</td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (() => {
+                const chartDataPoints = costHistory.length > 0 
+                  ? [...costHistory].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+                  : [{ date: new Date().toISOString(), invoiceNumber: 'Inicial', costUSD: kardexProduct.cost || 0, supplierName: 'Costo Registro', pctChange: 0 }];
+
+                const chartData = {
+                  labels: chartDataPoints.map(entry => {
+                    const d = new Date(entry.date);
+                    return `${d.getDate()}/${d.getMonth() + 1} (${entry.invoiceNumber})`;
+                  }),
+                  datasets: [
+                    {
+                      label: 'Costo Unitario ($)',
+                      data: chartDataPoints.map(entry => entry.costUSD),
+                      borderColor: '#20e3b2',
+                      backgroundColor: 'rgba(32, 227, 178, 0.1)',
+                      borderWidth: 3,
+                      tension: 0.4,
+                      pointRadius: 4,
+                      pointHoverRadius: 7,
+                      pointBackgroundColor: '#20e3b2',
+                      pointHoverBackgroundColor: '#fff',
+                      pointHoverBorderColor: '#20e3b2',
+                      pointHoverBorderWidth: 2,
+                      fill: true
+                    }
+                  ]
+                };
+
+                const chartOptions = {
+                  responsive: true,
+                  maintainAspectRatio: false,
+                  plugins: {
+                    legend: {
+                      display: false
+                    },
+                    tooltip: {
+                      backgroundColor: isDarkMode ? '#ffffff' : '#121214',
+                      titleColor: isDarkMode ? '#121214' : '#ffffff',
+                      bodyColor: isDarkMode ? '#121214' : '#ffffff',
+                      bodyFont: {
+                        family: 'Plus Jakarta Sans',
+                        weight: 'bold',
+                        size: 11
+                      },
+                      padding: 10,
+                      cornerRadius: 10,
+                      displayColors: false,
+                      callbacks: {
+                        label: function (context: any) {
+                          const entry = chartDataPoints[context.dataIndex];
+                          const lines = [`Costo: $${context.raw.toFixed(2)}`];
+                          if (entry.supplierName) {
+                            lines.push(`Proveedor: ${entry.supplierName}`);
+                          }
+                          if (entry.pctChange !== 0) {
+                            lines.push(`Variación: ${entry.pctChange > 0 ? '+' : ''}${entry.pctChange.toFixed(1)}%`);
+                          }
+                          return lines;
+                        }
+                      }
+                    }
+                  },
+                  scales: {
+                    x: {
+                      grid: {
+                        display: false
+                      },
+                      ticks: {
+                        color: isDarkMode ? '#90929c' : '#4a4c54',
+                        font: {
+                          family: 'Plus Jakarta Sans',
+                          weight: '700',
+                          size: 9
+                        }
+                      }
+                    },
+                    y: {
+                      ticks: {
+                        callback: function (value: any) {
+                          return `$${value.toFixed(2)}`;
+                        },
+                        color: isDarkMode ? '#90929c' : '#4a4c54',
+                        font: {
+                          family: 'Plus Jakarta Sans',
+                          weight: '700',
+                          size: 9
+                        }
+                      },
+                      grid: {
+                        color: isDarkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)'
+                      }
+                    }
+                  }
+                };
+
+                return (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                    {/* Chart Container */}
+                    <div style={{ 
+                      backgroundColor: 'var(--bg-primary)', 
+                      padding: '16px', 
+                      borderRadius: '12px', 
+                      border: '1px solid var(--border-color)',
+                      height: '240px',
+                      position: 'relative'
+                    }}>
+                      <Line data={chartData} options={chartOptions} />
+                    </div>
+
+                    {/* Cost History Table */}
+                    <div style={{ overflowX: 'auto', border: '1px solid var(--border-color)', borderRadius: '12px' }}>
+                      <table style={{ width: '100%', fontSize: '12px', borderCollapse: 'collapse' }}>
+                        <thead>
+                          <tr style={{ color: 'var(--text-secondary)', textAlign: 'left', borderBottom: '1.5px solid var(--border-color)', backgroundColor: 'var(--bg-input)' }}>
+                            <th style={{ padding: '10px 12px', fontWeight: 800 }}>FECHA COMPRA</th>
+                            <th style={{ padding: '10px 12px', fontWeight: 800 }}>FACTURA</th>
+                            <th style={{ padding: '10px 12px', fontWeight: 800 }}>PROVEEDOR</th>
+                            <th style={{ padding: '10px 12px', fontWeight: 800, textAlign: 'right' }}>COSTO USD</th>
+                            <th style={{ padding: '10px 12px', fontWeight: 800, textAlign: 'right' }}>COSTO VES</th>
+                            <th style={{ padding: '10px 12px', fontWeight: 800, textAlign: 'center' }}>VARIACIÓN</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {costHistory.length === 0 ? (
+                            <tr>
+                              <td colSpan={6} style={{ textAlign: 'center', padding: '30px', color: 'var(--text-secondary)' }}>
+                                No hay compras registradas para este producto. Se muestra el costo base de: {formatUSD(kardexProduct.cost)}
+                              </td>
+                            </tr>
+                          ) : (
+                            [...costHistory].reverse().map((entry, index) => {
+                              const change = entry.pctChange;
+                              const hasChange = change !== 0;
+                              const isUp = change > 0;
+                              return (
+                                <tr key={index} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                                  <td style={{ padding: '10px 12px', whiteSpace: 'nowrap', fontFamily: 'monospace' }}>
+                                    {new Date(entry.date).toLocaleDateString()}
+                                  </td>
+                                  <td style={{ padding: '10px 12px', fontFamily: 'monospace', fontWeight: 700 }}>{entry.invoiceNumber}</td>
+                                  <td style={{ padding: '10px 12px', color: 'var(--text-primary)', fontWeight: 600 }}>{entry.supplierName}</td>
+                                  <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 800, color: 'var(--text-primary)' }}>
+                                    {formatUSD(entry.costUSD)}
+                                  </td>
+                                  <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 800, color: 'var(--brand-gold)' }}>
+                                    {formatVES(entry.costUSD)}
+                                  </td>
+                                  <td style={{ padding: '10px 12px', textAlign: 'center' }}>
+                                    <span style={{
+                                      display: 'inline-block',
+                                      padding: '4px 8px',
+                                      borderRadius: '6px',
+                                      fontSize: '10px',
+                                      fontWeight: 800,
+                                      backgroundColor: !hasChange 
+                                        ? 'rgba(255,255,255,0.05)' 
+                                        : isUp 
+                                          ? 'rgba(239, 68, 68, 0.1)' 
+                                          : 'rgba(34, 197, 94, 0.1)',
+                                      color: !hasChange 
+                                        ? 'var(--text-muted)' 
+                                        : isUp 
+                                          ? '#ef4444' 
+                                          : '#22c55e'
+                                    }}>
+                                      {!hasChange ? '=' : `${isUp ? '▲ +' : '▼ '}${change.toFixed(1)}%`}
+                                    </span>
+                                  </td>
+                                </tr>
+                              );
+                            })
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Footer */}

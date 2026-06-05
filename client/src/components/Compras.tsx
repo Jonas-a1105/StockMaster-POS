@@ -10,7 +10,8 @@ import {
   RefreshCw,
   Edit,
   Info,
-  AlertCircle
+  AlertCircle,
+  Sparkles
 } from 'lucide-react';
 import { getDatabase } from '../db/database';
 import { syncWorker } from '../db/sync';
@@ -34,6 +35,9 @@ interface PurchaseItem {
   category: string;
   quantity: number;
   costUSD: number;
+  loteCode?: string;
+  expiryDate?: string;
+  priceUSD?: number;
 }
 
 interface PurchaseOrder {
@@ -49,7 +53,7 @@ interface PurchaseOrder {
 
 
 export default function Compras({ user, searchTerm = '' }: ComprasProps) {
-  const { convertToVES, formatVES, formatUSD } = useExchangeRate();
+  const { dolarRate, convertToVES, formatVES, formatUSD } = useExchangeRate();
   
   // Mobile detection for full-height modal layout
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
@@ -359,6 +363,7 @@ export default function Compras({ user, searchTerm = '' }: ComprasProps) {
           await doc.patch({
             stock: Number(newStock.toFixed(3)),
             cost: item.costUSD,
+            price: item.priceUSD && item.priceUSD > 0 ? item.priceUSD : doc.get('price'),
             batches: JSON.stringify(batches),
             version: currentVersion + 1,
             updatedAt: new Date().toISOString()
@@ -376,7 +381,7 @@ export default function Compras({ user, searchTerm = '' }: ComprasProps) {
             code: item.code,
             name: item.name,
             category: item.category,
-            price: Number((item.costUSD * 1.5).toFixed(2)),
+            price: item.priceUSD && item.priceUSD > 0 ? item.priceUSD : Number((item.costUSD * 1.5).toFixed(2)),
             cost: item.costUSD,
             stock: item.quantity,
             minStock: 5,
@@ -435,8 +440,61 @@ export default function Compras({ user, searchTerm = '' }: ComprasProps) {
     }
   };
 
+  const handleAutoSuggestReposition = async () => {
+    setIsRefreshing(true);
+    try {
+      const db = await getDatabase();
+      const allProds = await db.products.find().exec();
+      const lowStockProds = allProds
+        .map(p => p.toJSON())
+        .filter(p => p.stock <= (p.minStock || 5));
+
+      if (lowStockProds.length === 0) {
+        setAlertConfig({
+          title: 'Inventario al Día',
+          message: 'Todos los productos tienen existencias por encima de su stock mínimo de alerta. No se requiere reabastecimiento.',
+          type: 'success'
+        });
+        return;
+      }
+
+      // Mapear productos con bajo stock a ítems de compra sugeridos
+      const suggestedItems = lowStockProds.map(p => {
+        const minVal = p.minStock || 5;
+        const suggestedQty = Math.max(1, (minVal * 2) - p.stock);
+        return {
+          code: p.code,
+          name: p.name,
+          category: p.category || 'General',
+          quantity: suggestedQty,
+          costUSD: p.cost || 0.0,
+          priceUSD: p.price || 0.0,
+          loteCode: 'LOTE-COMPRA',
+          expiryDate: ''
+        };
+      });
+
+      setFormItems(suggestedItems);
+      setSupplierInput('Proveedor General');
+      setInvoiceNumberInput(`SUG-${Date.now().toString().slice(-4)}`);
+      setShowAddModal(true);
+
+      setShowSuccessToast(`Se precargaron sugerencias para ${suggestedItems.length} productos con stock crítico.`);
+      setTimeout(() => setShowSuccessToast(null), 4000);
+    } catch (e) {
+      console.error(e);
+      setAlertConfig({
+        title: 'Error de Sugerencia',
+        message: 'Ocurrió un error al analizar las existencias para reposición automática.',
+        type: 'error'
+      });
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
   const handleAddFormItem = () => {
-    setFormItems([...formItems, { code: '', name: '', category: 'Alimentos', quantity: 1, costUSD: 0.0 }]);
+    setFormItems([...formItems, { code: '', name: '', category: 'Alimentos', quantity: 1, costUSD: 0.0, priceUSD: 0.0, loteCode: 'LOTE-COMPRA', expiryDate: '' }]);
   };
 
   const handleRemoveFormItem = (idx: number) => {
@@ -487,6 +545,17 @@ export default function Compras({ user, searchTerm = '' }: ComprasProps) {
                 />
               </div>
             )}
+
+            <button 
+              onClick={handleAutoSuggestReposition}
+              disabled={isRefreshing}
+              className="btn-pill-dark"
+              style={{ gap: '8px', padding: '10px 18px', borderRadius: 'var(--button-radius)', backgroundColor: 'var(--bg-input)', display: 'flex', alignItems: 'center', cursor: isRefreshing ? 'not-allowed' : 'pointer' }}
+              title="Analizar stock mínimo y pre-cargar faltantes"
+            >
+              <Sparkles size={14} style={{ color: 'var(--brand-primary)' }} />
+              <span>Sugerencias de Compra</span>
+            </button>
 
             <button 
               onClick={() => setShowAddModal(true)}
@@ -805,25 +874,58 @@ export default function Compras({ user, searchTerm = '' }: ComprasProps) {
                             </button>
                           </div>
                           
-                          <div style={{ display: 'flex', gap: '12px', alignItems: 'center', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '6px', paddingLeft: '4px' }}>
+                          <div style={{ display: 'flex', gap: '12px', alignItems: 'center', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '6px', paddingLeft: '4px', flexWrap: 'wrap' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                              <span style={{ fontSize: '9.5px', fontWeight: 800, color: 'var(--text-secondary)' }}>CÓDIGO DE LOTE:</span>
+                              <span style={{ fontSize: '9.5px', fontWeight: 800, color: 'var(--text-secondary)' }}>LOTE:</span>
                               <input 
                                 type="text" 
                                 placeholder="Ej: LOTE-A"
                                 value={item.loteCode || ''}
                                 onChange={(e) => handleUpdateFormItem(idx, 'loteCode', e.target.value.toUpperCase())}
-                                style={{ width: '150px', padding: '4px 8px', fontSize: '10.5px', borderRadius: '6px', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)' }}
+                                style={{ width: '100px', padding: '4px 8px', fontSize: '10.5px', borderRadius: '6px', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)' }}
                               />
                             </div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                              <span style={{ fontSize: '9.5px', fontWeight: 800, color: 'var(--text-secondary)' }}>F. VENCIMIENTO:</span>
+                              <span style={{ fontSize: '9.5px', fontWeight: 800, color: 'var(--text-secondary)' }}>VENCE:</span>
                               <input 
                                 type="date" 
                                 value={item.expiryDate || ''}
                                 onChange={(e) => handleUpdateFormItem(idx, 'expiryDate', e.target.value)}
-                                style={{ width: '130px', padding: '4px 8px', fontSize: '10.5px', borderRadius: '6px', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)' }}
+                                style={{ width: '115px', padding: '4px 8px', fontSize: '10.5px', borderRadius: '6px', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)' }}
                               />
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <span style={{ fontSize: '9.5px', fontWeight: 800, color: 'var(--text-secondary)' }}>COSTO VES:</span>
+                              <input 
+                                type="number" 
+                                step="any"
+                                placeholder="Bs. 0.00"
+                                value={item.costUSD ? Number((item.costUSD * dolarRate).toFixed(2)) : ''}
+                                onChange={(e) => {
+                                  const valVES = parseFloat(e.target.value) || 0;
+                                  const valUSD = Number((valVES / dolarRate).toFixed(4));
+                                  handleUpdateFormItem(idx, 'costUSD', valUSD);
+                                }}
+                                style={{ width: '85px', padding: '4px 8px', fontSize: '10.5px', borderRadius: '6px', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)' }}
+                              />
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <span style={{ fontSize: '9.5px', fontWeight: 800, color: 'var(--text-secondary)' }}>P. VENTA USD:</span>
+                              <input 
+                                type="number" 
+                                step="any"
+                                placeholder="$ 0.00"
+                                value={item.priceUSD || ''}
+                                onChange={(e) => {
+                                  const valUSD = parseFloat(e.target.value) || 0;
+                                  handleUpdateFormItem(idx, 'priceUSD', valUSD);
+                                }}
+                                style={{ width: '80px', padding: '4px 8px', fontSize: '10.5px', borderRadius: '6px', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)', fontWeight: 'bold' }}
+                                required
+                              />
+                              <span style={{ fontSize: '9px', color: 'var(--brand-gold)', fontFamily: 'monospace', fontWeight: 700 }}>
+                                Bs. {((item.priceUSD || 0) * dolarRate).toFixed(1)}
+                              </span>
                             </div>
                           </div>
                         </div>
