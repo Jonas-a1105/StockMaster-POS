@@ -48,8 +48,8 @@ interface CartPanelProps {
   subtotalUSD: number;
   ivaUSD: number;
   totalUSD: number;
-  paymentMethod: 'EFECTIVO' | 'TARJETA' | 'TRANSFERENCIA';
-  setPaymentMethod: (method: 'EFECTIVO' | 'TARJETA' | 'TRANSFERENCIA') => void;
+  paymentMethod: 'EFECTIVO' | 'TARJETA' | 'TRANSFERENCIA' | 'CRÉDITO';
+  setPaymentMethod: (method: 'EFECTIVO' | 'TARJETA' | 'TRANSFERENCIA' | 'CRÉDITO') => void;
   selectedClient: ClientDocType | null;
   onUpdateQuantity: (productId: string, amount: number) => void;
   onSetQuantity: (productId: string, qty: number) => void;
@@ -118,6 +118,9 @@ export const CartPanel: React.FC<CartPanelProps> = ({
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             {cart.map((item) => {
+              const itemPrice = (selectedClient && selectedClient.clientType === 'Mayorista')
+                ? (item.product.wholesalePrice || item.product.price)
+                : item.product.price;
               return (
                 <div
                   key={item.product.id}
@@ -137,7 +140,7 @@ export const CartPanel: React.FC<CartPanelProps> = ({
                     </h5>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '2px' }}>
                       <span style={{ fontSize: '11px', color: 'var(--brand-primary)', fontWeight: 700 }}>
-                        {formatUSD(item.product.price)} x {formatQuantity(item.product.name, item.quantity)} = {formatUSD(item.product.price * item.quantity)}
+                        {formatUSD(itemPrice)} x {formatQuantity(item.product.name, item.quantity)} = {formatUSD(itemPrice * item.quantity)}
                       </span>
                     </div>
                   </div>
@@ -379,12 +382,14 @@ export const CartPanel: React.FC<CartPanelProps> = ({
           <label style={{ fontSize: '10.5px', fontWeight: 800, color: 'var(--text-secondary)', textTransform: 'uppercase', display: 'block', marginBottom: '8px' }}>
             Método de Pago
           </label>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px' }}>
-            {(['EFECTIVO', 'TARJETA', 'TRANSFERENCIA'] as const).map((method) => {
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '6px' }}>
+            {(['EFECTIVO', 'TARJETA', 'TRANSFERENCIA', 'CRÉDITO'] as const).map((method) => {
               const isActive = paymentMethod === method;
+              const isDisabled = method === 'CRÉDITO' && !selectedClient;
               return (
                 <button
                   key={method}
+                  disabled={isDisabled}
                   onClick={() => setPaymentMethod(method)}
                   style={{
                     padding: '8px 0',
@@ -394,9 +399,11 @@ export const CartPanel: React.FC<CartPanelProps> = ({
                     color: isActive ? 'var(--brand-teal)' : 'var(--text-secondary)',
                     fontSize: '10px',
                     fontWeight: 800,
-                    cursor: 'pointer',
+                    cursor: isDisabled ? 'not-allowed' : 'pointer',
+                    opacity: isDisabled ? 0.4 : 1,
                     transition: 'all 0.2s ease',
                   }}
+                  title={isDisabled ? 'Seleccione un cliente para habilitar crédito' : ''}
                 >
                   {method}
                 </button>

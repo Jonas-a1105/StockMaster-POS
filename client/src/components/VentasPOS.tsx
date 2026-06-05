@@ -42,7 +42,7 @@ export default function VentasPOS({ user, searchTerm = '' }: VentasPOSProps) {
   const [products, setProducts] = useState<ProductDocType[]>([]);
   const [localSearchTerm, setLocalSearchTerm] = useState('');
   const [cart, setCart] = useState<CartItem[]>([]);
-  const [paymentMethod, setPaymentMethod] = useState<'EFECTIVO' | 'TARJETA' | 'TRANSFERENCIA'>('EFECTIVO');
+  const [paymentMethod, setPaymentMethod] = useState<'EFECTIVO' | 'TARJETA' | 'TRANSFERENCIA' | 'CRÉDITO'>('EFECTIVO');
   const [ticketReceipt, setTicketReceipt] = useState<any | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -85,6 +85,13 @@ export default function VentasPOS({ user, searchTerm = '' }: VentasPOSProps) {
   const [showSuspendedPanel, setShowSuspendedPanel] = useState(false);
 
   // Focus client search input when selector opens
+  const getProductPrice = useCallback((product: ProductDocType) => {
+    if (selectedClient && selectedClient.clientType === 'Mayorista') {
+      return product.wholesalePrice || product.price;
+    }
+    return product.price;
+  }, [selectedClient]);
+
   useEffect(() => {
     if (showClientSelector) {
       setTimeout(() => clientSearchRef.current?.focus(), 80);
@@ -92,6 +99,13 @@ export default function VentasPOS({ user, searchTerm = '' }: VentasPOSProps) {
       setClientSearchTerm('');
     }
   }, [showClientSelector]);
+
+  // Restore payment method to EFECTIVO if selectedClient is removed and method is CRÉDITO
+  useEffect(() => {
+    if (!selectedClient && paymentMethod === 'CRÉDITO') {
+      setPaymentMethod('EFECTIVO');
+    }
+  }, [selectedClient, paymentMethod]);
 
   // Derive unique product categories
   const categories = useMemo(() => {
@@ -205,13 +219,13 @@ export default function VentasPOS({ user, searchTerm = '' }: VentasPOSProps) {
       id: `SUS-${Date.now().toString().slice(-6)}`,
       cart: [...cart],
       timestamp: new Date().toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit' }),
-      label: `${cart.length} items — ${formatUSD(cart.reduce((s, i) => s + i.product.price * i.quantity, 0))}`
+      label: `${cart.length} items — ${formatUSD(cart.reduce((s, i) => s + getProductPrice(i.product) * i.quantity, 0))}`
     };
     setSuspendedSales(prev => [...prev, suspended]);
     setCart([]);
     setShowMobileCart(false);
     addToast({ type: 'info', title: 'Venta suspendida', message: `Ticket ${suspended.id} guardado. ${cart.length} producto(s) en espera.` });
-  }, [cart, formatUSD, addToast]);
+  }, [cart, formatUSD, addToast, getProductPrice]);
 
   // Resume a suspended sale
   const handleResumeSale = useCallback((saleId: string) => {
@@ -368,7 +382,7 @@ export default function VentasPOS({ user, searchTerm = '' }: VentasPOSProps) {
   }, [showCheckoutModal, showSuspendedPanel, ticketReceipt, cart, filteredProducts, updateQuantity]);
 
   // Totales en dólares
-  const subtotalUSD = useMemo(() => cart.reduce((acc, item) => acc + (item.product.price * item.quantity), 0), [cart]);
+  const subtotalUSD = useMemo(() => cart.reduce((acc, item) => acc + (getProductPrice(item.product) * item.quantity), 0), [cart, getProductPrice]);
 
   // Descuento
   const discountUSD = useMemo(() => {
@@ -415,8 +429,11 @@ export default function VentasPOS({ user, searchTerm = '' }: VentasPOSProps) {
   // Total received in USD (all payment sources converted)
   const totalReceivedUSD = useMemo(() => usdReceived + vesReceivedInUSD + eurReceivedInUSD, [usdReceived, vesReceivedInUSD, eurReceivedInUSD]);
 
-  // Calculate IGTF (3% on USD and EUR cash payments)
-  const igtfUSD = useMemo(() => igtfApplied ? (usdReceived + eurReceivedInUSD) * 0.03 : 0, [igtfApplied, usdReceived, eurReceivedInUSD]);
+  // Calculate IGTF (3% on USD and EUR cash payments) - ignored for credit sales
+  const igtfUSD = useMemo(() => {
+    if (paymentMethod === 'CRÉDITO') return 0;
+    return igtfApplied ? (usdReceived + eurReceivedInUSD) * 0.03 : 0;
+  }, [paymentMethod, igtfApplied, usdReceived, eurReceivedInUSD]);
 
   // Adjust total due including IGTF
   const totalDueUSD = useMemo(() => totalUSD + igtfUSD, [totalUSD, igtfUSD]);
@@ -434,6 +451,23 @@ export default function VentasPOS({ user, searchTerm = '' }: VentasPOSProps) {
       const db = await getDatabase();
       const saleId = crypto.randomUUID();
       const ticketNumber = `TK-${Date.now().toString().slice(-6)}`;
+
+      // Validar límite de crédito antes de proceder si es una venta a crédito
+      if (paymentMethod === 'CRÉDITO') {
+        if (!selectedClient) {
+          throw new Error('Debe seleccionar un cliente para realizar una venta a crédito.');
+        }
+        const clientDoc = await db.clients.findOne({ selector: { id: selectedClient.id } }).exec();
+        if (!clientDoc) {
+          throw new Error('El cliente seleccionado no existe en el sistema.');
+        }
+        const currentBalance = clientDoc.get('creditBalance') || 0;
+        const limit = clientDoc.get('creditLimit') || 0;
+        const projectedBalance = Number((currentBalance + totalDueUSD).toFixed(2));
+        if (limit <= 0 || projectedBalance > limit) {
+          throw new Error(`Crédito denegado: no tiene línea de crédito autorizada o el monto supera el límite permitido ($${limit.toFixed(2)}).`);
+        }
+      }
 
       // Validar stock antes de escribir
       for (const item of cart) {
@@ -510,15 +544,17 @@ export default function VentasPOS({ user, searchTerm = '' }: VentasPOSProps) {
 
       // Determinar método de pago final
       let finalPaymentMethod: string = paymentMethod;
-      const paymentSources = [];
-      if (usdReceived > 0) paymentSources.push('EFECTIVO USD');
-      if (vesReceived > 0) paymentSources.push('VES');
-      if (eurReceived > 0) paymentSources.push('EFECTIVO EUR');
-      
-      if (paymentSources.length > 1) {
-        finalPaymentMethod = 'MIXTO';
-      } else if (paymentSources.length === 1) {
-        finalPaymentMethod = paymentSources[0] === 'VES' ? paymentMethod : 'EFECTIVO';
+      if (paymentMethod !== 'CRÉDITO') {
+        const paymentSources = [];
+        if (usdReceived > 0) paymentSources.push('EFECTIVO USD');
+        if (vesReceived > 0) paymentSources.push('VES');
+        if (eurReceived > 0) paymentSources.push('EFECTIVO EUR');
+        
+        if (paymentSources.length > 1) {
+          finalPaymentMethod = 'MIXTO';
+        } else if (paymentSources.length === 1) {
+          finalPaymentMethod = paymentSources[0] === 'VES' ? paymentMethod : 'EFECTIVO';
+        }
       }
 
       // Registrar la Venta en IndexedDB
@@ -532,15 +568,30 @@ export default function VentasPOS({ user, searchTerm = '' }: VentasPOSProps) {
         items: cart.map(item => ({
           productId: item.product.id,
           quantity: item.quantity,
-          price: item.product.price
+          price: getProductPrice(item.product)
         })),
         pendingSync: true,
         dolarRate: Number(dolarRate),
+        usdReceived: usdReceived,
+        vesReceived: vesReceived,
+        eurReceived: eurReceived,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };
 
       await db.sales.insert(newSale);
+
+      // Si el método de pago original es crédito, acumular en el balance del cliente
+      if (paymentMethod === 'CRÉDITO' && selectedClient) {
+        const clientDoc = await db.clients.findOne({ selector: { id: selectedClient.id } }).exec();
+        if (clientDoc) {
+          const currentBalance = clientDoc.get('creditBalance') || 0;
+          await clientDoc.patch({
+            creditBalance: Number((currentBalance + totalDueUSD).toFixed(2)),
+            updatedAt: new Date().toISOString()
+          });
+        }
+      }
 
       logAuditEvent(user, 'VENTA_POS_COBRO', {
         total: Number(totalDueUSD.toFixed(2)),
@@ -557,8 +608,8 @@ export default function VentasPOS({ user, searchTerm = '' }: VentasPOSProps) {
         items: cart.map(item => ({
           name: item.product.name,
           quantity: item.quantity,
-          price: item.product.price,
-          subtotal: item.product.price * item.quantity
+          price: getProductPrice(item.product),
+          subtotal: getProductPrice(item.product) * item.quantity
         })),
         subtotalUSD: Number(subtotalUSD.toFixed(2)),
         discountUSD: Number(discountUSD.toFixed(2)),
@@ -1074,6 +1125,8 @@ export default function VentasPOS({ user, searchTerm = '' }: VentasPOSProps) {
         onConfirmCheckout={confirmCheckout}
         dolarRate={dolarRate}
         isMobile={isMobile}
+        selectedClient={selectedClient}
+        paymentMethod={paymentMethod}
       />
 
       {/* TICKET IMPRESO PREVIEW MODAL */}

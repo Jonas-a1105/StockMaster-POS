@@ -17,11 +17,30 @@ interface CierreCajaProps {
   };
 }
 
+interface CashMovement {
+  id: string;
+  type: 'ENTRY' | 'EXIT'; // Entrada or Salida
+  amountUSD: number;
+  amountVES: number;
+  description: string;
+  timestamp: string;
+}
+
+interface CierreCajaProps {
+  user: {
+    id: string;
+    email: string;
+    name: string;
+    role: string;
+  };
+}
+
 interface ActiveShift {
   openTime: string; // ISO string
   openUSD: number;
   openVES: number;
   cashierName: string;
+  cashMovements?: CashMovement[];
 }
 
 interface ArqueoReport {
@@ -34,13 +53,17 @@ interface ArqueoReport {
   expectedUSD: number;
   expectedVES: number;
   expectedCardVES: number;
+  expectedMobileVES: number;
   declaredUSD: number;
   declaredVES: number;
   declaredCardVES: number;
+  declaredMobileVES: number;
   diffUSD: number;
   diffVES: number;
   diffCardVES: number;
+  diffMobileVES: number;
   totalSalesUSD: number;
+  cashMovements?: CashMovement[];
 }
 
 export default function CierreCaja({ user }: CierreCajaProps) {
@@ -64,12 +87,21 @@ export default function CierreCaja({ user }: CierreCajaProps) {
   const [declaredUSD, setDeclaredUSD] = useState('');
   const [declaredVES, setDeclaredVES] = useState('');
   const [declaredCardVES, setDeclaredCardVES] = useState('');
+  const [declaredMobileVES, setDeclaredMobileVES] = useState('');
 
   // Expected totals computed from DB
   const [salesList, setSalesList] = useState<SaleDocType[]>([]);
   const [expectedSalesUSD, setExpectedSalesUSD] = useState(0);
   const [expectedSalesVES, setExpectedSalesVES] = useState(0);
   const [expectedCardVES, setExpectedCardVES] = useState(0);
+  const [expectedMobileVES, setExpectedMobileVES] = useState(0);
+
+  // Vales/Movimientos States
+  const [showValeModal, setShowValeModal] = useState(false);
+  const [valeType, setValeType] = useState<'ENTRY' | 'EXIT'>('EXIT');
+  const [valeCurrency, setValeCurrency] = useState<'USD' | 'VES'>('USD');
+  const [valeAmount, setValeAmount] = useState('');
+  const [valeDescription, setValeDescription] = useState('');
 
   // Past closures history
   const [arqueoHistory, setArqueoHistory] = useState<ArqueoReport[]>([]);
@@ -128,26 +160,47 @@ export default function CierreCaja({ user }: CierreCajaProps) {
         let cashUSD = 0;
         let cashVES = 0;
         let cardVES = 0;
+        let mobileVES = 0;
 
         sales.forEach(sale => {
-          // Approximate currency allocation based on paymentMethod
-          if (sale.paymentMethod === 'EFECTIVO' || sale.paymentMethod === 'EFECTIVO USD') {
-            cashUSD += sale.total; // in USD
-          } else if (sale.paymentMethod === 'TARJETA') {
-            cardVES += sale.total * sale.dolarRate; // converted to VES
-          } else if (sale.paymentMethod === 'MIXTO') {
-            // Mixed: let's assume half was cash USD, half card VES
-            cashUSD += sale.total * 0.5;
-            cardVES += (sale.total * 0.5) * sale.dolarRate;
+          // Utilizar desgloses exactos almacenados (DB v7)
+          const usdRec = sale.usdReceived !== undefined ? sale.usdReceived : 0;
+          const vesRec = sale.vesReceived !== undefined ? sale.vesReceived : 0;
+          const hasReceivedFields = sale.usdReceived !== undefined || sale.vesReceived !== undefined;
+
+          if (hasReceivedFields) {
+            if (sale.paymentMethod === 'EFECTIVO' || sale.paymentMethod === 'EFECTIVO USD') {
+              cashUSD += usdRec;
+              cashVES += vesRec;
+            } else if (sale.paymentMethod === 'TARJETA') {
+              cardVES += vesRec;
+            } else if (sale.paymentMethod === 'TRANSFERENCIA') {
+              mobileVES += vesRec;
+            } else if (sale.paymentMethod === 'MIXTO') {
+              cashUSD += usdRec;
+              cashVES += vesRec;
+            }
           } else {
-            // Transferencia or others
-            cardVES += sale.total * sale.dolarRate;
+            // Fallback para ventas antiguas sin desglose
+            if (sale.paymentMethod === 'EFECTIVO' || sale.paymentMethod === 'EFECTIVO USD') {
+              cashUSD += sale.total;
+            } else if (sale.paymentMethod === 'TARJETA') {
+              cardVES += sale.total * sale.dolarRate;
+            } else if (sale.paymentMethod === 'MIXTO') {
+              cashUSD += sale.total * 0.5;
+              cardVES += (sale.total * 0.5) * sale.dolarRate;
+            } else if (sale.paymentMethod === 'TRANSFERENCIA') {
+              mobileVES += sale.total * sale.dolarRate;
+            } else {
+              cardVES += sale.total * sale.dolarRate;
+            }
           }
         });
 
         setExpectedSalesUSD(cashUSD);
         setExpectedSalesVES(cashVES);
         setExpectedCardVES(cardVES);
+        setExpectedMobileVES(mobileVES);
 
       } catch (err) {
         console.error('Error fetching shift sales:', err);
@@ -198,6 +251,7 @@ export default function CierreCaja({ user }: CierreCajaProps) {
     setDeclaredUSD('');
     setDeclaredVES('');
     setDeclaredCardVES('');
+    setDeclaredMobileVES('');
 
     addToast({ 
       type: 'success', 
@@ -213,14 +267,32 @@ export default function CierreCaja({ user }: CierreCajaProps) {
     const decUSD = parseFloat(declaredUSD) || 0;
     const decVES = parseFloat(declaredVES) || 0;
     const decCardVES = parseFloat(declaredCardVES) || 0;
+    const decMobileVES = parseFloat(declaredMobileVES) || 0;
 
-    // Expected USD includes starting float + sales USD
-    const totalExpectedUSD = activeShift.openUSD + expectedSalesUSD;
-    const totalExpectedVES = activeShift.openVES + expectedSalesVES;
+    // Calcular montos de vales registrados
+    let valesUSD = 0;
+    let valesVES = 0;
+    const movements = activeShift.cashMovements || [];
+    movements.forEach(m => {
+      if (m.type === 'ENTRY') {
+        valesUSD += m.amountUSD || 0;
+        valesVES += m.amountVES || 0;
+      } else {
+        valesUSD -= m.amountUSD || 0;
+        valesVES -= m.amountVES || 0;
+      }
+    });
 
-    const diffUSD = decUSD - totalExpectedUSD;
-    const diffVES = decVES - totalExpectedVES;
-    const diffCardVES = decCardVES - expectedCardVES;
+    // Expected USD / VES includes starting float + sales + vales
+    const totalExpectedUSD = Number((activeShift.openUSD + expectedSalesUSD + valesUSD).toFixed(2));
+    const totalExpectedVES = Number((activeShift.openVES + expectedSalesVES + valesVES).toFixed(2));
+    const totalExpectedCardVES = Number(expectedCardVES.toFixed(2));
+    const totalExpectedMobileVES = Number(expectedMobileVES.toFixed(2));
+
+    const diffUSD = Number((decUSD - totalExpectedUSD).toFixed(2));
+    const diffVES = Number((decVES - totalExpectedVES).toFixed(2));
+    const diffCardVES = Number((decCardVES - totalExpectedCardVES).toFixed(2));
+    const diffMobileVES = Number((decMobileVES - totalExpectedMobileVES).toFixed(2));
 
     const totalSalesUSD = salesList.reduce((sum, s) => sum + s.total, 0);
 
@@ -233,14 +305,18 @@ export default function CierreCaja({ user }: CierreCajaProps) {
       openVES: activeShift.openVES,
       expectedUSD: totalExpectedUSD,
       expectedVES: totalExpectedVES,
-      expectedCardVES: expectedCardVES,
+      expectedCardVES: totalExpectedCardVES,
+      expectedMobileVES: totalExpectedMobileVES,
       declaredUSD: decUSD,
       declaredVES: decVES,
       declaredCardVES: decCardVES,
+      declaredMobileVES: decMobileVES,
       diffUSD: diffUSD,
       diffVES: diffVES,
       diffCardVES: diffCardVES,
-      totalSalesUSD
+      diffMobileVES: diffMobileVES,
+      totalSalesUSD,
+      cashMovements: activeShift.cashMovements || []
     };
 
     // Save in history
@@ -261,13 +337,82 @@ export default function CierreCaja({ user }: CierreCajaProps) {
 
     logAuditEvent(user, 'CAJA_CIERRE', {
       totalSalesUSD: totalSalesUSD,
-      diffUSD: diffUSD
+      diffUSD: diffUSD,
+      valesCount: movements.length
     });
 
     addToast({
       type: 'warning',
       title: 'Arqueo de Turno Ejecutado',
       message: 'Caja cerrada y POS bloqueado. Se requiere aprobación del administrador para iniciar un nuevo turno.'
+    });
+  };
+
+  // Registrar Vale de Caja
+  const handleRegisterVale = () => {
+    if (!activeShift) return;
+    const amount = parseFloat(valeAmount) || 0;
+    if (amount <= 0 || !valeDescription.trim()) {
+      addToast({
+        type: 'error',
+        title: 'Datos Inválidos',
+        message: 'Por favor ingrese un monto mayor a cero y un concepto válido.'
+      });
+      return;
+    }
+
+    const newVale: CashMovement = {
+      id: `VAL-${Date.now().toString().slice(-6)}`,
+      type: valeType,
+      amountUSD: valeCurrency === 'USD' ? amount : 0,
+      amountVES: valeCurrency === 'VES' ? amount : 0,
+      description: valeDescription.trim(),
+      timestamp: new Date().toISOString()
+    };
+
+    const updatedMovements = [...(activeShift.cashMovements || []), newVale];
+    const updatedShift = {
+      ...activeShift,
+      cashMovements: updatedMovements
+    };
+
+    localStorage.setItem('stockmaster_active_shift', JSON.stringify(updatedShift));
+    setActiveShift(updatedShift);
+
+    setValeAmount('');
+    setValeDescription('');
+    setShowValeModal(false);
+
+    addToast({
+      type: 'success',
+      title: 'Vale Registrado',
+      message: `Se registró un ${valeType === 'ENTRY' ? 'ingreso' : 'egreso'} de ${valeCurrency === 'USD' ? '$' + amount.toFixed(2) : 'Bs. ' + amount.toFixed(2)}: "${newVale.description}"`
+    });
+
+    logAuditEvent(user, 'CAJA_VALE_REGISTRO', {
+      valeType,
+      amount,
+      currency: valeCurrency,
+      description: newVale.description
+    });
+  };
+
+  // Eliminar Vale
+  const handleDeleteVale = (valeId: string) => {
+    if (!activeShift) return;
+    const updatedMovements = (activeShift.cashMovements || []).filter(m => m.id !== valeId);
+    const updatedShift = {
+      ...activeShift,
+      cashMovements: updatedMovements
+    };
+
+    localStorage.setItem('stockmaster_active_shift', JSON.stringify(updatedShift));
+    setActiveShift(updatedShift);
+
+    addToast({
+      type: 'warning',
+      title: 'Vale Eliminado',
+      message: 'Se ha eliminado el vale de caja seleccionado.'
     });
   };
 
@@ -289,7 +434,7 @@ export default function CierreCaja({ user }: CierreCajaProps) {
     });
   };
   const handleExportCSV = (report: ArqueoReport) => {
-    const csvContent = [
+    const csvContentLines = [
       ["Reporte de Cierre de Caja Z", report.id],
       ["Empresa", settings.businessName],
       ["RIF", settings.businessRIF],
@@ -304,16 +449,37 @@ export default function CierreCaja({ user }: CierreCajaProps) {
       ["Declarado USD ($)", report.declaredUSD.toFixed(2)],
       ["Declarado VES (Bs.)", report.declaredVES.toFixed(2)],
       ["Declarado Puntos VES (Bs.)", report.declaredCardVES.toFixed(2)],
+      ["Declarado Pago Movil VES (Bs.)", (report.declaredMobileVES || 0).toFixed(2)],
       ["Esperado USD ($)", report.expectedUSD.toFixed(2)],
       ["Esperado VES (Bs.)", report.expectedVES.toFixed(2)],
       ["Esperado Puntos VES (Bs.)", report.expectedCardVES.toFixed(2)],
+      ["Esperado Pago Movil VES (Bs.)", (report.expectedMobileVES || 0).toFixed(2)],
       ["Diferencia USD ($)", report.diffUSD.toFixed(2)],
       ["Diferencia VES (Bs.)", report.diffVES.toFixed(2)],
       ["Diferencia Puntos VES (Bs.)", report.diffCardVES.toFixed(2)],
+      ["Diferencia Pago Movil VES (Bs.)", (report.diffMobileVES || 0).toFixed(2)],
       ["Total Ventas USD ($)", report.totalSalesUSD.toFixed(2)]
-    ]
-    .map(row => row.map(cell => `"${cell.toString().replace(/"/g, '""')}"`).join(','))
-    .join('\n');
+    ];
+
+    if (report.cashMovements && report.cashMovements.length > 0) {
+      csvContentLines.push([]);
+      csvContentLines.push(["Vales de Caja Registrados"]);
+      csvContentLines.push(["ID", "Tipo", "Monto USD", "Monto VES", "Concepto", "Fecha"]);
+      report.cashMovements.forEach(m => {
+        csvContentLines.push([
+          m.id,
+          m.type,
+          m.amountUSD.toFixed(2),
+          m.amountVES.toFixed(2),
+          m.description,
+          new Date(m.timestamp).toLocaleString('es-VE')
+        ]);
+      });
+    }
+
+    const csvContent = csvContentLines
+      .map(row => row.map(cell => `"${cell.toString().replace(/"/g, '""')}"`).join(','))
+      .join('\n');
 
     const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -500,19 +666,21 @@ export default function CierreCaja({ user }: CierreCajaProps) {
                 </span>
               </div>
 
-              {/* Stats Bar */}
+              {/* Stats Bar (Blind Closing - Only show initial float and opening time) */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', backgroundColor: 'var(--bg-primary)', padding: '14px', borderRadius: '16px', border: '1.5px solid var(--border-color)' }}>
                 <div>
-                  <span style={{ fontSize: '9px', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Fondo Inicial (USD)</span>
+                  <span style={{ fontSize: '9px', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Fondo Inicial USD</span>
                   <strong style={{ fontSize: '14px', color: 'var(--text-primary)', display: 'block', marginTop: '2px' }}>{formatUSD(activeShift.openUSD)}</strong>
                 </div>
                 <div>
-                  <span style={{ fontSize: '9px', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Ventas del Turno</span>
-                  <strong style={{ fontSize: '14px', color: 'var(--brand-teal)', display: 'block', marginTop: '2px' }}>{salesList.length} facturas</strong>
+                  <span style={{ fontSize: '9px', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Fondo Inicial VES</span>
+                  <strong style={{ fontSize: '14px', color: 'var(--text-primary)', display: 'block', marginTop: '2px' }}>Bs. {activeShift.openVES.toFixed(2)}</strong>
                 </div>
                 <div>
-                  <span style={{ fontSize: '9px', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Total Vendido USD</span>
-                  <strong style={{ fontSize: '14px', color: 'var(--brand-gold)', display: 'block', marginTop: '2px' }}>{formatUSD(salesList.reduce((s, x) => s + x.total, 0))}</strong>
+                  <span style={{ fontSize: '9px', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Hora de Apertura</span>
+                  <strong style={{ fontSize: '14px', color: 'var(--brand-teal)', display: 'block', marginTop: '2px' }}>
+                    {new Date(activeShift.openTime).toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit' })}
+                  </strong>
                 </div>
               </div>
 
@@ -549,81 +717,111 @@ export default function CierreCaja({ user }: CierreCajaProps) {
                     </div>
                   </div>
 
-                  {/* Tarjetas / Puntos de Venta (Bs.) */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                    <label style={{ fontSize: '10.5px', fontWeight: 800, color: 'var(--text-secondary)' }}>Lote del Punto de Venta / Tarjetas (Bs. VES)</label>
-                    <input 
-                      type="number" 
-                      value={declaredCardVES} 
-                      onChange={(e) => setDeclaredCardVES(e.target.value)} 
-                      className="search-input" 
-                      placeholder="0.00"
-                      style={{ height: '40px', padding: '0 12px', borderRadius: '12px', border: '1.5px solid var(--border-color)', backgroundColor: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: '13px', fontWeight: 700 }}
-                    />
+                  {/* Tarjetas / Pago Móvil */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <label style={{ fontSize: '10.5px', fontWeight: 800, color: 'var(--text-secondary)' }}>Punto de Venta Tarjeta (Bs.)</label>
+                      <input 
+                        type="number" 
+                        value={declaredCardVES} 
+                        onChange={(e) => setDeclaredCardVES(e.target.value)} 
+                        className="search-input" 
+                        placeholder="0.00"
+                        style={{ height: '40px', padding: '0 12px', borderRadius: '12px', border: '1.5px solid var(--border-color)', backgroundColor: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: '13px', fontWeight: 700 }}
+                      />
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <label style={{ fontSize: '10.5px', fontWeight: 800, color: 'var(--text-secondary)' }}>Pago Móvil VES (Bs.)</label>
+                      <input 
+                        type="number" 
+                        value={declaredMobileVES} 
+                        onChange={(e) => setDeclaredMobileVES(e.target.value)} 
+                        className="search-input" 
+                        placeholder="0.00"
+                        style={{ height: '40px', padding: '0 12px', borderRadius: '12px', border: '1.5px solid var(--border-color)', backgroundColor: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: '13px', fontWeight: 700 }}
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
 
-              {/* Reactive Comparatives Table */}
-              <div style={{ marginTop: '10px' }}>
-                <h4 style={{ fontSize: '12px', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                  Auditoría en Tiempo Real de Diferencias
-                </h4>
-                <div style={{
-                  border: '1.5px solid var(--border-color)',
-                  borderRadius: '16px',
-                  overflow: 'hidden',
-                  fontSize: '12px'
-                }}>
-                  {/* Table Head */}
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', padding: '10px 14px', backgroundColor: 'var(--bg-primary)', borderBottom: '1px solid var(--border-color)', fontWeight: 800, color: 'var(--text-secondary)' }}>
-                    <span>Moneda</span>
-                    <span>Esperado</span>
-                    <span>Declarado</span>
-                    <span>Diferencia</span>
-                  </div>
-
-                  {/* USD Cash Row */}
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', padding: '12px 14px', borderBottom: '1px solid var(--border-color)', alignItems: 'center' }}>
-                    <strong>USD Cash</strong>
-                    <span>{formatUSD(activeShift.openUSD + expectedSalesUSD)}</span>
-                    <span style={{ color: 'var(--brand-primary)', fontWeight: 700 }}>{formatUSD(parseFloat(declaredUSD) || 0)}</span>
-                    <strong style={{
-                      color: (parseFloat(declaredUSD) || 0) - (activeShift.openUSD + expectedSalesUSD) >= 0 ? '#22c55e' : '#ef4444'
-                    }}>
-                      {formatUSD((parseFloat(declaredUSD) || 0) - (activeShift.openUSD + expectedSalesUSD))}
-                    </strong>
-                  </div>
-
-                  {/* VES Cash Row */}
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', padding: '12px 14px', borderBottom: '1px solid var(--border-color)', alignItems: 'center' }}>
-                    <strong>VES Cash</strong>
-                    <span>Bs. {(activeShift.openVES + expectedSalesVES).toFixed(2)}</span>
-                    <span style={{ color: 'var(--brand-gold)', fontWeight: 700 }}>Bs. {(parseFloat(declaredVES) || 0).toFixed(2)}</span>
-                    <strong style={{
-                      color: (parseFloat(declaredVES) || 0) - (activeShift.openVES + expectedSalesVES) >= 0 ? '#22c55e' : '#ef4444'
-                    }}>
-                      Bs. {((parseFloat(declaredVES) || 0) - (activeShift.openVES + expectedSalesVES)).toFixed(2)}
-                    </strong>
-                  </div>
-
-                  {/* VES Cards Row */}
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', padding: '12px 14px', alignItems: 'center' }}>
-                    <strong>Punto Bs.</strong>
-                    <span>Bs. {expectedCardVES.toFixed(2)}</span>
-                    <span style={{ color: 'var(--brand-gold)', fontWeight: 700 }}>Bs. {(parseFloat(declaredCardVES) || 0).toFixed(2)}</span>
-                    <strong style={{
-                      color: (parseFloat(declaredCardVES) || 0) - expectedCardVES >= 0 ? '#22c55e' : '#ef4444'
-                    }}>
-                      Bs. {((parseFloat(declaredCardVES) || 0) - expectedCardVES).toFixed(2)}
-                    </strong>
-                  </div>
+              {/* Vales de Caja (Ingresos / Egresos menores) */}
+              <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '16px', marginTop: '10px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                  <h4 style={{ fontSize: '12px', fontWeight: 800, color: 'var(--text-primary)', textTransform: 'uppercase', letterSpacing: '0.5px', margin: 0 }}>
+                    💸 Vales y Egresos Menores
+                  </h4>
+                  <button
+                    onClick={() => setShowValeModal(true)}
+                    className="btn-pill-dark"
+                    style={{ padding: '6px 12px', borderRadius: '8px', fontSize: '11px', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '4px', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-input)' }}
+                  >
+                    + Registrar Vale
+                  </button>
                 </div>
+
+                {/* Lista de Vales del Turno */}
+                {(!activeShift.cashMovements || activeShift.cashMovements.length === 0) ? (
+                  <div style={{ textAlign: 'center', padding: '16px', fontSize: '11px', color: 'var(--text-muted)', backgroundColor: 'var(--bg-primary)', borderRadius: '12px', border: '1px dashed var(--border-color)' }}>
+                    No se registran vales ni egresos en este turno.
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '180px', overflowY: 'auto' }}>
+                    {activeShift.cashMovements.map((m) => (
+                      <div
+                        key={m.id}
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          padding: '10px 12px',
+                          borderRadius: '12px',
+                          backgroundColor: 'var(--bg-primary)',
+                          border: '1.2px solid var(--border-color)',
+                          fontSize: '11.5px'
+                        }}
+                      >
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span style={{
+                              padding: '2px 6px',
+                              borderRadius: '6px',
+                              fontSize: '8px',
+                              fontWeight: 800,
+                              backgroundColor: m.type === 'ENTRY' ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                              color: m.type === 'ENTRY' ? '#22c55e' : '#ef4444'
+                            }}>
+                              {m.type === 'ENTRY' ? 'INGRESO' : 'EGRESO'}
+                            </span>
+                            <strong style={{ color: 'var(--text-primary)' }}>
+                              {m.amountUSD > 0 ? formatUSD(m.amountUSD) : `Bs. ${m.amountVES.toFixed(2)}`}
+                            </strong>
+                          </div>
+                          <span style={{ color: 'var(--text-secondary)', fontSize: '10px' }}>{m.description}</span>
+                        </div>
+                        <button
+                          onClick={() => handleDeleteVale(m.id)}
+                          style={{
+                            border: 'none',
+                            backgroundColor: 'transparent',
+                            color: '#ef4444',
+                            cursor: 'pointer',
+                            padding: '4px',
+                            opacity: 0.8
+                          }}
+                          title="Eliminar Vale"
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <button
                 onClick={handleCloseShift}
-                disabled={declaredUSD === '' || declaredVES === '' || declaredCardVES === ''}
+                disabled={declaredUSD === '' || declaredVES === '' || declaredCardVES === '' || declaredMobileVES === ''}
                 className="btn-yellow"
                 style={{
                   padding: '12px',
@@ -632,8 +830,8 @@ export default function CierreCaja({ user }: CierreCajaProps) {
                   fontWeight: 800,
                   fontSize: '13px',
                   marginTop: '10px',
-                  opacity: (declaredUSD === '' || declaredVES === '' || declaredCardVES === '') ? 0.5 : 1,
-                  cursor: (declaredUSD === '' || declaredVES === '' || declaredCardVES === '') ? 'not-allowed' : 'pointer'
+                  opacity: (declaredUSD === '' || declaredVES === '' || declaredCardVES === '' || declaredMobileVES === '') ? 0.5 : 1,
+                  cursor: (declaredUSD === '' || declaredVES === '' || declaredCardVES === '' || declaredMobileVES === '') ? 'not-allowed' : 'pointer'
                 }}
               >
                 PROCESAR CIERRE DE CAJA (ARQUEO Z)
@@ -678,7 +876,7 @@ export default function CierreCaja({ user }: CierreCajaProps) {
                       <span>Cajero: <strong>{report.cashierName}</strong></span>
                       <span>Total Ventas: <strong style={{ color: 'var(--brand-teal)' }}>{formatUSD(report.totalSalesUSD)}</strong></span>
                       <span style={{
-                        color: (report.diffUSD < 0 || report.diffVES < 0 || report.diffCardVES < 0) ? '#ef4444' : '#22c55e',
+                        color: (report.diffUSD < 0 || report.diffVES < 0 || report.diffCardVES < 0 || report.diffMobileVES < 0) ? '#ef4444' : '#22c55e',
                         fontWeight: 700,
                         fontSize: '9.5px',
                         display: 'flex',
@@ -687,7 +885,7 @@ export default function CierreCaja({ user }: CierreCajaProps) {
                         marginTop: '4px'
                       }}>
                         <ShieldAlert size={11} />
-                        {(report.diffUSD < 0 || report.diffVES < 0 || report.diffCardVES < 0) ? 'Con Faltante' : 'Arqueo Cuadrado'}
+                        {(report.diffUSD < 0 || report.diffVES < 0 || report.diffCardVES < 0 || report.diffMobileVES < 0) ? 'Con Faltante' : 'Arqueo Cuadrado'}
                       </span>
                     </div>
                   </div>
@@ -822,9 +1020,13 @@ export default function CierreCaja({ user }: CierreCajaProps) {
                   <span>Físico VES en Caja:</span>
                   <span>Bs. {selectedReport.declaredVES.toFixed(2)}</span>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', paddingLeft: '8px', marginBottom: '8px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', paddingLeft: '8px' }}>
                   <span>Lote de Puntos Tarjeta:</span>
                   <span>Bs. {selectedReport.declaredCardVES.toFixed(2)}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', paddingLeft: '8px', marginBottom: '8px' }}>
+                  <span>Pago Móvil Bs. VES:</span>
+                  <span>Bs. {(selectedReport.declaredMobileVES || 0).toFixed(2)}</span>
                 </div>
 
                 <div style={{ fontWeight: 'bold', marginBottom: '6px' }}>BALANCES ESPERADOS:</div>
@@ -836,10 +1038,27 @@ export default function CierreCaja({ user }: CierreCajaProps) {
                   <span>Esperado VES:</span>
                   <span>Bs. {selectedReport.expectedVES.toFixed(2)}</span>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', paddingLeft: '8px', marginBottom: '8px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', paddingLeft: '8px' }}>
                   <span>Esperado Punto:</span>
                   <span>Bs. {selectedReport.expectedCardVES.toFixed(2)}</span>
                 </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', paddingLeft: '8px', marginBottom: '8px' }}>
+                  <span>Esperado Pago Móvil:</span>
+                  <span>Bs. {(selectedReport.expectedMobileVES || 0).toFixed(2)}</span>
+                </div>
+
+                {selectedReport.cashMovements && selectedReport.cashMovements.length > 0 && (
+                  <>
+                    <div style={{ borderBottom: '1.5px dashed #000', margin: '4px 0' }}></div>
+                    <div style={{ fontWeight: 'bold', marginBottom: '6px' }}>VALES DE CAJA REGISTRADOS:</div>
+                    {selectedReport.cashMovements.map((m: any) => (
+                      <div key={m.id} style={{ display: 'flex', justifyContent: 'space-between', paddingLeft: '8px', fontSize: '10.5px' }}>
+                        <span>{m.type === 'ENTRY' ? '[IN] ' : '[OUT] '}{m.description.slice(0, 18)}:</span>
+                        <span>{m.amountUSD > 0 ? formatUSD(m.amountUSD) : `Bs. ${m.amountVES.toFixed(2)}`}</span>
+                      </div>
+                    ))}
+                  </>
+                )}
 
                 <div style={{ borderBottom: '1.5px dashed #000', margin: '8px 0' }}></div>
                 
@@ -855,6 +1074,10 @@ export default function CierreCaja({ user }: CierreCajaProps) {
                 <div style={{ display: 'flex', justifyContent: 'space-between', paddingLeft: '8px', color: selectedReport.diffCardVES >= 0 ? '#000' : '#d97706' }}>
                   <span>Diferencia Puntos:</span>
                   <span>{selectedReport.diffCardVES >= 0 ? '+' : ''}Bs. {selectedReport.diffCardVES.toFixed(2)}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', paddingLeft: '8px', color: selectedReport.diffMobileVES >= 0 ? '#000' : '#d97706' }}>
+                  <span>Diferencia Pago Móvil:</span>
+                  <span>{(selectedReport.diffMobileVES || 0) >= 0 ? '+' : ''}Bs. {(selectedReport.diffMobileVES || 0).toFixed(2)}</span>
                 </div>
 
                 <div style={{ borderBottom: '1.5px dashed #000', margin: '8px 0' }}></div>
@@ -900,6 +1123,175 @@ export default function CierreCaja({ user }: CierreCajaProps) {
                 style={{ flex: 1, justifyContent: 'center', borderRadius: 'var(--button-radius)' }}
               >
                 <span>Cerrar</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL REGISTRO DE VALE DE CAJA */}
+      {showValeModal && activeShift && (
+        <div className="modal-registration-backdrop" style={{
+          position: 'fixed',
+          top: 0, left: 0, right: 0, bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.65)',
+          backdropFilter: 'blur(8px)',
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          zIndex: 1600,
+          padding: '20px'
+        }} onClick={() => setShowValeModal(false)}>
+          <div 
+            className="widget animate-entrance modal-registration-content" 
+            style={{
+              width: '100%',
+              maxWidth: '380px',
+              backgroundColor: 'var(--bg-card)',
+              borderRadius: 'var(--card-radius)',
+              border: '1.5px solid var(--border-color)',
+              boxShadow: '0 20px 50px rgba(0, 0, 0, 0.4)',
+              overflow: 'hidden',
+              display: 'flex',
+              flexDirection: 'column'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div style={{ padding: '16px 20px', borderBottom: '1.5px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h4 style={{ fontSize: '14px', fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>
+                Registrar Vale / Movimiento de Caja
+              </h4>
+              <button 
+                onClick={() => setShowValeModal(false)}
+                style={{ border: 'none', backgroundColor: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer', padding: '4px' }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              {/* Tipo de Movimiento */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <label style={{ fontSize: '10.5px', fontWeight: 800, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Tipo de Movimiento</label>
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <button
+                    onClick={() => setValeType('EXIT')}
+                    style={{
+                      flex: 1,
+                      padding: '8px 0',
+                      borderRadius: '10px',
+                      border: valeType === 'EXIT' ? '1.5px solid #ef4444' : '1.5px solid var(--border-color)',
+                      backgroundColor: valeType === 'EXIT' ? 'rgba(239, 68, 68, 0.05)' : 'var(--bg-input)',
+                      color: valeType === 'EXIT' ? '#ef4444' : 'var(--text-secondary)',
+                      fontSize: '11px',
+                      fontWeight: 800,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    EGRESO (Salida)
+                  </button>
+                  <button
+                    onClick={() => setValeType('ENTRY')}
+                    style={{
+                      flex: 1,
+                      padding: '8px 0',
+                      borderRadius: '10px',
+                      border: valeType === 'ENTRY' ? '1.5px solid #22c55e' : '1.5px solid var(--border-color)',
+                      backgroundColor: valeType === 'ENTRY' ? 'rgba(34, 197, 94, 0.05)' : 'var(--bg-input)',
+                      color: valeType === 'ENTRY' ? '#22c55e' : 'var(--text-secondary)',
+                      fontSize: '11px',
+                      fontWeight: 800,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    INGRESO (Entrada)
+                  </button>
+                </div>
+              </div>
+
+              {/* Moneda */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <label style={{ fontSize: '10.5px', fontWeight: 800, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Moneda del Vale</label>
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <button
+                    onClick={() => setValeCurrency('USD')}
+                    style={{
+                      flex: 1,
+                      padding: '8px 0',
+                      borderRadius: '10px',
+                      border: valeCurrency === 'USD' ? '1.5px solid var(--brand-teal)' : '1.5px solid var(--border-color)',
+                      backgroundColor: valeCurrency === 'USD' ? 'rgba(14, 165, 164, 0.05)' : 'var(--bg-input)',
+                      color: valeCurrency === 'USD' ? 'var(--brand-teal)' : 'var(--text-secondary)',
+                      fontSize: '11px',
+                      fontWeight: 800,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    DÓLARES ($ USD)
+                  </button>
+                  <button
+                    onClick={() => setValeCurrency('VES')}
+                    style={{
+                      flex: 1,
+                      padding: '8px 0',
+                      borderRadius: '10px',
+                      border: valeCurrency === 'VES' ? '1.5px solid var(--brand-gold)' : '1.5px solid var(--border-color)',
+                      backgroundColor: valeCurrency === 'VES' ? 'rgba(251, 191, 36, 0.05)' : 'var(--bg-input)',
+                      color: valeCurrency === 'VES' ? 'var(--brand-gold)' : 'var(--text-secondary)',
+                      fontSize: '11px',
+                      fontWeight: 800,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    BOLÍVARES (Bs. VES)
+                  </button>
+                </div>
+              </div>
+
+              {/* Monto */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <label style={{ fontSize: '10.5px', fontWeight: 800, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Monto</label>
+                <input
+                  type="number"
+                  value={valeAmount}
+                  onChange={(e) => setValeAmount(e.target.value)}
+                  className="search-input"
+                  placeholder="0.00"
+                  style={{ height: '40px', padding: '0 12px', borderRadius: '12px', border: '1.5px solid var(--border-color)', backgroundColor: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: '13px', fontWeight: 700 }}
+                />
+              </div>
+
+              {/* Concepto / Descripción */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <label style={{ fontSize: '10.5px', fontWeight: 800, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Concepto / Motivo</label>
+                <input
+                  type="text"
+                  value={valeDescription}
+                  onChange={(e) => setValeDescription(e.target.value)}
+                  className="search-input"
+                  placeholder="Ej. Pago de taxi, compra de bolsas..."
+                  style={{ height: '40px', padding: '0 12px', borderRadius: '12px', border: '1.5px solid var(--border-color)', backgroundColor: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: '13px', fontWeight: 600 }}
+                />
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div style={{ padding: '12px 20px', borderTop: '1.5px solid var(--border-color)', display: 'flex', gap: '10px', backgroundColor: 'var(--bg-input)' }}>
+              <button
+                onClick={() => setShowValeModal(false)}
+                className="btn-pill-dark"
+                style={{ flex: 1, padding: '10px 0', fontSize: '11px', justifyContent: 'center', borderRadius: '8px' }}
+              >
+                CANCELAR
+              </button>
+              <button
+                onClick={handleRegisterVale}
+                className="btn-yellow"
+                style={{ flex: 1, padding: '10px 0', fontSize: '11px', justifyContent: 'center', borderRadius: '8px' }}
+              >
+                REGISTRAR VALE
               </button>
             </div>
           </div>

@@ -20,7 +20,7 @@ interface ClientesProps {
 interface CustomClient extends ClientDocType {
   rif: string; // Stored as RIF or ID
   address: string;
-  clientType: 'Regular' | 'Mayorista';
+  clientType: 'Detal' | 'Mayorista';
   status: 'Activo' | 'Inactivo';
 }
 
@@ -58,26 +58,20 @@ export default function Clientes({ searchTerm = '', user }: ClientesProps) {
     email: '',
     phone: '',
     address: '',
-    clientType: 'Regular' as 'Regular' | 'Mayorista',
+    clientType: 'Detal' as 'Detal' | 'Mayorista',
+    creditLimit: '',
   });
 
   // Credit & Accounts Receivable (CxC) states
   const [showCreditModal, setShowCreditModal] = useState(false);
   const [selectedClient, setSelectedClient] = useState<CustomClient | null>(null);
-  const [creditTab, setCreditTab] = useState<'history' | 'cxc'>('cxc');
+  const [creditTab, setCreditTab] = useState<'cxc' | 'history' | 'purchases'>('cxc');
   const [abonoForm, setAbonoForm] = useState({ amount: '', method: 'EFECTIVO' });
-  const [creditsMap, setCreditsMap] = useState<Record<string, {
-    balanceUSD: number;
-    invoices: Array<{ ticket: string; date: string; total: number; paid: number; pending: number; status: 'Pendiente' | 'Pagado' }>;
-    payments: Array<{ id: string; date: string; amount: number; method: string }>;
-  }>>({});
 
-  const loadCreditsData = () => {
-    const saved = localStorage.getItem('stockmaster_client_credits_local');
-    if (saved) {
-      setCreditsMap(JSON.parse(saved));
-    }
-  };
+  // Details data states
+  const [clientCreditInvoices, setClientCreditInvoices] = useState<Array<{ ticket: string; date: string; total: number; paid: number; pending: number; status: 'Pendiente' | 'Pagado' }>>([]);
+  const [clientTopProducts, setClientTopProducts] = useState<Array<{ name: string; quantity: number }>>([]);
+  const [clientPurchaseHistory, setClientPurchaseHistory] = useState<Array<{ ticket: string; date: string; total: number; itemsCount: number; paymentMethod: string }>>([]);
 
   // Form state
   const [newClient, setNewClient] = useState({
@@ -86,8 +80,92 @@ export default function Clientes({ searchTerm = '', user }: ClientesProps) {
     email: '',
     phone: '',
     address: '',
-    clientType: 'Regular' as 'Regular' | 'Mayorista',
+    clientType: 'Detal' as 'Detal' | 'Mayorista',
+    creditLimit: '',
   });
+
+  const loadClientDetailsData = async (client: CustomClient) => {
+    try {
+      const db = await getDatabase();
+      
+      // Load all sales for this client
+      const salesDocs = await db.sales.find({
+        selector: { clientId: client.rif }
+      }).exec();
+      
+      const sales = salesDocs.map(d => d.toJSON());
+      
+      // Sort sales by date descending for history
+      const sortedSales = [...sales].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      
+      // Map purchase history
+      const history = sortedSales.map(sale => ({
+        ticket: sale.ticketNumber,
+        date: new Date(sale.createdAt).toLocaleDateString('es-VE') + ' ' + new Date(sale.createdAt).toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit' }),
+        total: sale.total,
+        itemsCount: sale.items.reduce((sum, item) => sum + item.quantity, 0),
+        paymentMethod: sale.paymentMethod
+      }));
+      setClientPurchaseHistory(history);
+      
+      // Calculate Top Products
+      const productsDocs = await db.products.find().exec();
+      const productsMap: Record<string, string> = {};
+      productsDocs.forEach(p => {
+        productsMap[p.id] = p.get('name');
+      });
+      
+      const itemCounts: Record<string, { name: string; quantity: number }> = {};
+      sales.forEach(sale => {
+        sale.items.forEach(item => {
+          const pName = productsMap[item.productId] || 'Producto Desconocido';
+          if (!itemCounts[item.productId]) {
+            itemCounts[item.productId] = { name: pName, quantity: 0 };
+          }
+          itemCounts[item.productId].quantity += item.quantity;
+        });
+      });
+      const topProducts = Object.values(itemCounts)
+        .sort((a, b) => b.quantity - a.quantity)
+        .slice(0, 5);
+      setClientTopProducts(topProducts);
+
+      // Process credit invoices using FIFO on payments
+      const payments = JSON.parse(client.creditPayments || '[]');
+      const totalAbonado = payments.reduce((sum: number, p: any) => sum + p.amount, 0);
+      
+      // Find credit sales, ordered oldest first
+      const creditSales = sales
+        .filter(s => s.paymentMethod === 'CRÉDITO')
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+        
+      let remainingAbono = totalAbonado;
+      const creditInvoices = creditSales.map(sale => {
+        const total = sale.total;
+        let paid = 0;
+        if (remainingAbono > 0) {
+          paid = Math.min(total, remainingAbono);
+          remainingAbono -= paid;
+        }
+        const pending = Math.max(0, total - paid);
+        return {
+          ticket: sale.ticketNumber,
+          date: new Date(sale.createdAt).toLocaleDateString('es-VE'),
+          total,
+          paid: Number(paid.toFixed(2)),
+          pending: Number(pending.toFixed(2)),
+          status: pending === 0 ? 'Pagado' as const : 'Pendiente' as const
+        };
+      });
+      
+      // Reverse to show newest first
+      creditInvoices.reverse();
+      setClientCreditInvoices(creditInvoices);
+      
+    } catch (err) {
+      console.error('Error loading client details data:', err);
+    }
+  };
 
   const loadClients = async () => {
     setIsRefreshing(true);
@@ -103,9 +181,12 @@ export default function Clientes({ searchTerm = '', user }: ClientesProps) {
           name: json.name,
           email: json.email || 'N/A',
           phone: json.phone || 'N/A',
-          address: 'Venezuela',
-          clientType: 'Regular',
+          address: json.address || 'Venezuela',
+          clientType: (json.clientType || 'Detal') as 'Detal' | 'Mayorista',
           status: 'Activo',
+          creditLimit: json.creditLimit || 0,
+          creditBalance: json.creditBalance || 0,
+          creditPayments: json.creditPayments || '[]',
           updatedAt: json.updatedAt
         };
       });
@@ -120,7 +201,6 @@ export default function Clientes({ searchTerm = '', user }: ClientesProps) {
 
   useEffect(() => {
     loadClients();
-    loadCreditsData();
 
     let sub: any;
     getDatabase().then(db => {
@@ -186,12 +266,19 @@ export default function Clientes({ searchTerm = '', user }: ClientesProps) {
         name: newClient.name.trim(),
         email: newClient.email.trim() || undefined,
         phone: newClient.phone.trim() || undefined,
+        address: newClient.address.trim() || 'Venezuela',
+        clientType: newClient.clientType,
+        creditLimit: parseFloat(newClient.creditLimit) || 0,
+        creditBalance: 0,
+        creditPayments: '[]',
         updatedAt: new Date().toISOString()
       });
 
       logAuditEvent(user, 'CLIENTE_CREAR', {
         name: newClient.name.trim(),
-        phone: newClient.phone.trim() || undefined
+        phone: newClient.phone.trim() || undefined,
+        clientType: newClient.clientType,
+        creditLimit: parseFloat(newClient.creditLimit) || 0
       });
 
       setShowAddModal(false);
@@ -201,7 +288,8 @@ export default function Clientes({ searchTerm = '', user }: ClientesProps) {
         email: '',
         phone: '',
         address: '',
-        clientType: 'Regular',
+        clientType: 'Detal',
+        creditLimit: '',
       });
 
       // Show Premium Toast
@@ -227,8 +315,9 @@ export default function Clientes({ searchTerm = '', user }: ClientesProps) {
       name: client.name,
       email: (client.email && client.email !== 'N/A') ? client.email : '',
       phone: (client.phone && client.phone !== 'N/A') ? client.phone : '',
-      address: client.address === 'Distrito Capital, Caracas, Venezuela' ? '' : client.address,
+      address: client.address === 'Venezuela' ? '' : client.address,
       clientType: client.clientType,
+      creditLimit: client.creditLimit ? String(client.creditLimit) : '0',
     });
     setShowEditModal(true);
   };
@@ -254,13 +343,18 @@ export default function Clientes({ searchTerm = '', user }: ClientesProps) {
             name: editClientForm.name.trim(),
             email: editClientForm.email.trim() || undefined,
             phone: editClientForm.phone.trim() || undefined,
+            address: editClientForm.address.trim() || 'Venezuela',
+            clientType: editClientForm.clientType,
+            creditLimit: parseFloat(editClientForm.creditLimit) || 0,
             updatedAt: new Date().toISOString()
           }
         });
         
         logAuditEvent(user, 'CLIENTE_EDITAR', {
           id: editingClient?.id,
-          name: editClientForm.name.trim()
+          name: editClientForm.name.trim(),
+          clientType: editClientForm.clientType,
+          creditLimit: parseFloat(editClientForm.creditLimit) || 0
         });
 
         setShowEditModal(false);
@@ -315,14 +409,14 @@ export default function Clientes({ searchTerm = '', user }: ClientesProps) {
     setCreditTab('cxc');
     setAbonoForm({ amount: '', method: 'EFECTIVO' });
     setShowCreditModal(true);
+    loadClientDetailsData(client);
   };
 
-  const handleRegisterAbono = (e: React.FormEvent) => {
+  const handleRegisterAbono = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!isAdmin) return;
     if (!selectedClient) return;
 
-    const clientRIF = selectedClient.rif;
     const amountVal = parseFloat(abonoForm.amount) || 0;
     if (amountVal <= 0) {
       setAlertConfig({
@@ -333,65 +427,63 @@ export default function Clientes({ searchTerm = '', user }: ClientesProps) {
       return;
     }
 
-    const clientData = creditsMap[clientRIF] || { balanceUSD: 0, invoices: [], payments: [] };
-    if (amountVal > clientData.balanceUSD) {
+    if (amountVal > (selectedClient.creditBalance || 0)) {
       setAlertConfig({
         title: 'Excedente Detectado',
-        message: `El abono de $${amountVal.toFixed(2)} excede el saldo deudor total del cliente ($${clientData.balanceUSD.toFixed(2)}).`,
+        message: `El abono de $${amountVal.toFixed(2)} excede el saldo deudor total del cliente ($${(selectedClient.creditBalance || 0).toFixed(2)}).`,
         type: 'info'
       });
       return;
     }
 
-    // Amortizar sobre las facturas pendientes
-    let remainingAbono = amountVal;
-    const nextInvoices = clientData.invoices.map(inv => {
-      if (inv.pending > 0 && remainingAbono > 0) {
-        const paymentToApply = Math.min(inv.pending, remainingAbono);
-        const newPaid = inv.paid + paymentToApply;
-        const newPending = inv.pending - paymentToApply;
-        remainingAbono -= paymentToApply;
-        return {
-          ...inv,
-          paid: Number(newPaid.toFixed(2)),
-          pending: Number(newPending.toFixed(2)),
-          status: newPending === 0 ? 'Pagado' as const : 'Pendiente' as const
+    try {
+      const db = await getDatabase();
+      const doc = await db.clients.findOne({ selector: { id: selectedClient.id } }).exec();
+      if (doc) {
+        const currentPayments = JSON.parse(doc.get('creditPayments') || '[]');
+        const newPayment = {
+          id: 'pay_' + Date.now(),
+          date: new Date().toLocaleDateString('es-VE') + ' ' + new Date().toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit' }),
+          amount: amountVal,
+          method: abonoForm.method
         };
+        const nextPayments = [newPayment, ...currentPayments];
+        const nextBalance = Math.max(0, (doc.get('creditBalance') || 0) - amountVal);
+
+        await doc.patch({
+          creditBalance: Number(nextBalance.toFixed(2)),
+          creditPayments: JSON.stringify(nextPayments),
+          updatedAt: new Date().toISOString()
+        });
+
+        logAuditEvent(user, 'POS_ABONO_CREDITO_CLIENTE', {
+          clientId: selectedClient.id,
+          clientName: selectedClient.name,
+          amount: amountVal,
+          paymentMethod: abonoForm.method
+        });
+
+        const updatedClient = {
+          ...selectedClient,
+          creditBalance: nextBalance,
+          creditPayments: JSON.stringify(nextPayments)
+        };
+        setSelectedClient(updatedClient);
+        loadClientDetailsData(updatedClient);
+        loadClients();
+
+        setAbonoForm({ amount: '', method: 'EFECTIVO' });
+        setShowSuccessToast(`Abono de $${amountVal.toFixed(2)} registrado exitosamente.`);
+        setTimeout(() => setShowSuccessToast(null), 3500);
       }
-      return inv;
-    });
-
-    const newPayment = {
-      id: 'pay_' + Date.now(),
-      date: new Date().toLocaleDateString('es-VE'),
-      amount: amountVal,
-      method: abonoForm.method
-    };
-
-    const nextClientData = {
-      balanceUSD: Number((clientData.balanceUSD - amountVal).toFixed(2)),
-      invoices: nextInvoices,
-      payments: [newPayment, ...clientData.payments]
-    };
-
-    const nextMap = {
-      ...creditsMap,
-      [clientRIF]: nextClientData
-    };
-
-    setCreditsMap(nextMap);
-    localStorage.setItem('stockmaster_client_credits_local', JSON.stringify(nextMap));
-
-    logAuditEvent(user, 'POS_ABONO_CREDITO_CLIENTE', {
-      clientId: selectedClient.id,
-      clientName: selectedClient.name,
-      amount: amountVal,
-      paymentMethod: abonoForm.method
-    });
-
-    setAbonoForm({ amount: '', method: 'EFECTIVO' });
-    setShowSuccessToast(`Abono de $${amountVal.toFixed(2)} registrado exitosamente.`);
-    setTimeout(() => setShowSuccessToast(null), 3500);
+    } catch (err) {
+      console.error('Error al registrar abono:', err);
+      setAlertConfig({
+        title: 'Error de Servidor',
+        message: 'No se pudo registrar el abono en la base local.',
+        type: 'error'
+      });
+    }
   };
 
   return (
@@ -411,9 +503,9 @@ export default function Clientes({ searchTerm = '', user }: ClientesProps) {
             <span className="view-header-pill pill-teal">
               {clients.length} Clientes
             </span>
-            {Object.values(creditsMap).filter(c => c.balanceUSD > 0).length > 0 && (
+            {clients.filter(c => (c.creditBalance || 0) > 0).length > 0 && (
               <span className="view-header-pill pill-yellow">
-                {Object.values(creditsMap).filter(c => c.balanceUSD > 0).length} Con Deuda
+                {clients.filter(c => (c.creditBalance || 0) > 0).length} Con Deuda
               </span>
             )}
           </div>
@@ -736,19 +828,36 @@ export default function Clientes({ searchTerm = '', user }: ClientesProps) {
                   </div>
                 </div>
 
-                <div>
-                  <label style={{ fontWeight: 800, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', textTransform: 'uppercase', fontSize: '10px' }}>
-                    Categoría de Facturación
-                  </label>
-                  <CustomSelect 
-                    value={newClient.clientType}
-                    onChange={(val) => setNewClient({ ...newClient, clientType: val as 'Regular' | 'Mayorista' })}
-                    options={[
-                      { value: 'Regular', label: 'Cliente Detal (Regular)' },
-                      { value: 'Mayorista', label: 'Cliente Contribuyente (Mayorista/RIF)' }
-                    ]}
-                    style={{ width: '100%' }}
-                  />
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                  <div>
+                    <label style={{ fontWeight: 800, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', textTransform: 'uppercase', fontSize: '10px' }}>
+                      Tipo de Cliente
+                    </label>
+                    <CustomSelect 
+                      value={newClient.clientType}
+                      onChange={(val) => setNewClient({ ...newClient, clientType: val as 'Detal' | 'Mayorista' })}
+                      options={[
+                        { value: 'Detal', label: 'Cliente Detal (Detal)' },
+                        { value: 'Mayorista', label: 'Cliente Mayorista (Mayorista)' }
+                      ]}
+                      style={{ width: '100%' }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontWeight: 800, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', textTransform: 'uppercase', fontSize: '10px' }}>
+                      Límite de Crédito ($ USD)
+                    </label>
+                    <input 
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={newClient.creditLimit}
+                      onChange={(e) => setNewClient({ ...newClient, creditLimit: e.target.value })}
+                      placeholder="Ej: 500"
+                      className="search-input"
+                      style={{ padding: '10px 12px', borderRadius: '12px', border: '1.5px solid var(--border-color)', width: '100%' }}
+                    />
+                  </div>
                 </div>
 
                 <div>
@@ -908,20 +1017,36 @@ export default function Clientes({ searchTerm = '', user }: ClientesProps) {
                   </div>
                 </div>
 
-                <div>
-                  <label style={{ fontWeight: 800, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', textTransform: 'uppercase', fontSize: '10px' }}>
-                    Categoría de Facturación
-                  </label>
-                  <CustomSelect 
-                    value={editClientForm.clientType}
-                    onChange={(val) => setEditClientForm({ ...editClientForm, clientType: val as 'Regular' | 'Mayorista' })}
-                    options={[
-                      { value: 'Regular', label: 'Cliente Detal (Regular)' },
-                      { value: 'Mayorista', label: 'Cliente Contribuyente (Mayorista/RIF)' }
-                    ]}
-                    style={{ width: '100%' }}
-                    disabled={true}
-                  />
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                  <div>
+                    <label style={{ fontWeight: 800, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', textTransform: 'uppercase', fontSize: '10px' }}>
+                      Tipo de Cliente
+                    </label>
+                    <CustomSelect 
+                      value={editClientForm.clientType}
+                      onChange={(val) => setEditClientForm({ ...editClientForm, clientType: val as 'Detal' | 'Mayorista' })}
+                      options={[
+                        { value: 'Detal', label: 'Cliente Detal (Detal)' },
+                        { value: 'Mayorista', label: 'Cliente Mayorista (Mayorista)' }
+                      ]}
+                      style={{ width: '100%' }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontWeight: 800, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', textTransform: 'uppercase', fontSize: '10px' }}>
+                      Límite de Crédito ($ USD)
+                    </label>
+                    <input 
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={editClientForm.creditLimit}
+                      onChange={(e) => setEditClientForm({ ...editClientForm, creditLimit: e.target.value })}
+                      placeholder="Ej: 500"
+                      className="search-input"
+                      style={{ padding: '10px 12px', borderRadius: '12px', border: '1.5px solid var(--border-color)', width: '100%' }}
+                    />
+                  </div>
                 </div>
 
                 <div>
@@ -1097,7 +1222,7 @@ export default function Clientes({ searchTerm = '', user }: ClientesProps) {
                   cursor: 'pointer'
                 }}
               >
-                Cuentas por Cobrar
+                Cuentas por Cobrar (Fiado)
               </button>
               <button
                 onClick={() => setCreditTab('history')}
@@ -1113,7 +1238,23 @@ export default function Clientes({ searchTerm = '', user }: ClientesProps) {
                   cursor: 'pointer'
                 }}
               >
-                Historial de Abonos / Compras
+                Historial de Abonos
+              </button>
+              <button
+                onClick={() => setCreditTab('purchases')}
+                style={{
+                  flex: 1,
+                  padding: '12px 0',
+                  border: 'none',
+                  borderBottom: creditTab === 'purchases' ? '3px solid var(--brand-teal)' : 'none',
+                  backgroundColor: 'transparent',
+                  color: creditTab === 'purchases' ? 'var(--brand-teal)' : 'var(--text-secondary)',
+                  fontWeight: 800,
+                  fontSize: '12.5px',
+                  cursor: 'pointer'
+                }}
+              >
+                Historial de Compras
               </button>
             </div>
 
@@ -1125,31 +1266,51 @@ export default function Clientes({ searchTerm = '', user }: ClientesProps) {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                   
                   {/* Balance Widget */}
-                  <div style={{
-                    backgroundColor: 'var(--bg-primary)',
-                    border: '1.5px solid var(--border-color)',
-                    borderRadius: '16px',
-                    padding: '16px',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center'
-                  }}>
-                    <div>
-                      <span style={{ fontSize: '10px', fontWeight: 800, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>
-                        Saldo Pendiente Total
-                      </span>
-                      <strong style={{ fontSize: '24px', display: 'block', color: (creditsMap[selectedClient.rif]?.balanceUSD || 0) > 0 ? '#ef4444' : '#22c55e', marginTop: '2px', fontWeight: 850 }}>
-                        ${(creditsMap[selectedClient.rif]?.balanceUSD || 0).toFixed(2)}
-                      </strong>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    <div style={{
+                      backgroundColor: 'var(--bg-primary)',
+                      border: '1.5px solid var(--border-color)',
+                      borderRadius: '16px',
+                      padding: '16px',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center'
+                    }}>
+                      <div>
+                        <span style={{ fontSize: '10px', fontWeight: 800, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>
+                          Saldo Deudor Actual
+                        </span>
+                        <strong style={{ fontSize: '24px', display: 'block', color: (selectedClient.creditBalance || 0) > 0 ? '#ef4444' : '#22c55e', marginTop: '2px', fontWeight: 850 }}>
+                          ${(selectedClient.creditBalance || 0).toFixed(2)}
+                        </strong>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <span style={{ fontSize: '10px', fontWeight: 800, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>
+                          Límite de Crédito
+                        </span>
+                        <strong style={{ fontSize: '20px', display: 'block', color: 'var(--text-primary)', marginTop: '2px', fontWeight: 800 }}>
+                          ${(selectedClient.creditLimit || 0).toFixed(2)}
+                        </strong>
+                      </div>
                     </div>
-                    <div style={{ textAlign: 'right' }}>
-                      <span style={{ fontSize: '10px', fontWeight: 800, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>
-                        Equivalente VES BCV
-                      </span>
-                      <strong style={{ fontSize: '16px', display: 'block', color: 'var(--brand-gold)', marginTop: '4px', fontFamily: 'monospace' }}>
-                        Bs. {((creditsMap[selectedClient.rif]?.balanceUSD || 0) * dolarRate).toLocaleString('es-VE', { minimumFractionDigits: 2 })}
-                      </strong>
-                    </div>
+
+                    {/* Progress Bar */}
+                    {selectedClient.creditLimit > 0 && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10.5px', color: 'var(--text-secondary)', fontWeight: 700 }}>
+                          <span>Crédito Consumido</span>
+                          <span>{((selectedClient.creditBalance || 0) / selectedClient.creditLimit * 100).toFixed(1)}%</span>
+                        </div>
+                        <div style={{ width: '100%', height: '8px', backgroundColor: 'var(--bg-input)', borderRadius: '4px', overflow: 'hidden' }}>
+                          <div style={{ 
+                            width: `${Math.min(100, ((selectedClient.creditBalance || 0) / selectedClient.creditLimit * 100))}%`, 
+                            height: '100%', 
+                            backgroundColor: ((selectedClient.creditBalance || 0) / selectedClient.creditLimit) > 0.85 ? '#ef4444' : 'var(--brand-teal)', 
+                            transition: 'width 0.3s ease' 
+                          }} />
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {/* Facturas a Crédito */}
@@ -1170,14 +1331,14 @@ export default function Clientes({ searchTerm = '', user }: ClientesProps) {
                           </tr>
                         </thead>
                         <tbody>
-                          {(!creditsMap[selectedClient.rif]?.invoices || creditsMap[selectedClient.rif].invoices.length === 0) ? (
+                          {clientCreditInvoices.length === 0 ? (
                             <tr>
                               <td colSpan={6} style={{ textAlign: 'center', padding: '20px', color: 'var(--text-secondary)' }}>
-                                Sin facturas registradas.
+                                Sin facturas de crédito pendientes.
                               </td>
                             </tr>
                           ) : (
-                            creditsMap[selectedClient.rif].invoices.map((inv, idx) => (
+                            clientCreditInvoices.map((inv, idx) => (
                               <tr key={idx} style={{ borderBottom: '1px solid var(--border-color)', fontSize: '11.5px' }}>
                                 <td style={{ padding: '8px 12px', fontWeight: 800, fontFamily: 'monospace', color: 'var(--brand-primary)' }}>{inv.ticket}</td>
                                 <td style={{ padding: '8px 12px', color: 'var(--text-secondary)' }}>{inv.date}</td>
@@ -1198,7 +1359,7 @@ export default function Clientes({ searchTerm = '', user }: ClientesProps) {
                   </div>
 
                   {/* Formulario Registrar Abono */}
-                  {isAdmin && (creditsMap[selectedClient.rif]?.balanceUSD || 0) > 0 && (
+                  {isAdmin && (selectedClient.creditBalance || 0) > 0 && (
                     <form onSubmit={handleRegisterAbono} style={{
                       backgroundColor: 'rgba(14,165,164,0.04)',
                       border: '1.5px solid rgba(14,165,164,0.15)',
@@ -1283,14 +1444,14 @@ export default function Clientes({ searchTerm = '', user }: ClientesProps) {
                         </tr>
                       </thead>
                       <tbody>
-                        {(!creditsMap[selectedClient.rif]?.payments || creditsMap[selectedClient.rif].payments.length === 0) ? (
+                        {(!selectedClient.creditPayments || JSON.parse(selectedClient.creditPayments).length === 0) ? (
                           <tr>
                             <td colSpan={4} style={{ textAlign: 'center', padding: '20px', color: 'var(--text-secondary)' }}>
                               Sin abonos registrados en el historial de cuenta local.
                             </td>
                           </tr>
                         ) : (
-                          creditsMap[selectedClient.rif].payments.map((pay, idx) => (
+                          (JSON.parse(selectedClient.creditPayments) as any[]).map((pay, idx) => (
                             <tr key={idx} style={{ borderBottom: '1px solid var(--border-color)', fontSize: '11.5px' }}>
                               <td style={{ padding: '8px 12px', color: 'var(--text-secondary)' }}>{pay.date}</td>
                               <td style={{ padding: '8px 12px', fontWeight: 700 }}>
@@ -1306,6 +1467,93 @@ export default function Clientes({ searchTerm = '', user }: ClientesProps) {
                       </tbody>
                     </table>
                   </div>
+                </div>
+              )}
+
+              {/* PESTAÑA 3: HISTORIAL DE COMPRAS */}
+              {creditTab === 'purchases' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                  
+                  {/* Top Products section */}
+                  <div>
+                    <h5 style={{ fontWeight: 800, fontSize: '12px', color: 'var(--text-primary)', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                      Productos Más Comprados (Fidelización)
+                    </h5>
+                    {clientTopProducts.length === 0 ? (
+                      <div style={{ padding: '16px', textAlign: 'center', color: 'var(--text-secondary)', border: '1.5px dashed var(--border-color)', borderRadius: '12px' }}>
+                        No hay suficientes compras registradas para este cliente.
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', backgroundColor: 'var(--bg-input)', padding: '14px', borderRadius: '14px', border: '1.5px solid var(--border-color)' }}>
+                        {clientTopProducts.map((p, idx) => {
+                          const maxQty = clientTopProducts[0]?.quantity || 1;
+                          const pct = (p.quantity / maxQty) * 100;
+                          return (
+                            <div key={idx} style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', fontWeight: 700 }}>
+                                <span style={{ color: 'var(--text-primary)' }}>{p.name}</span>
+                                <span style={{ color: 'var(--brand-primary)' }}>{p.quantity.toFixed(1)} u.</span>
+                              </div>
+                              <div style={{ width: '100%', height: '6px', backgroundColor: 'var(--bg-card)', borderRadius: '3px', overflow: 'hidden' }}>
+                                <div style={{ width: `${pct}%`, height: '100%', backgroundColor: 'var(--brand-primary)', borderRadius: '3px' }} />
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Purchase History table */}
+                  <div>
+                    <h5 style={{ fontWeight: 800, fontSize: '12px', color: 'var(--text-primary)', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                      Historial General de Ventas
+                    </h5>
+                    <div style={{ maxHeight: '180px', overflowY: 'auto', border: '1.5px solid var(--border-color)', borderRadius: '12px' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                        <thead>
+                          <tr style={{ backgroundColor: 'var(--bg-input)', borderBottom: '1px solid var(--border-color)', color: 'var(--text-secondary)', fontSize: '10.5px', fontWeight: 800 }}>
+                            <th style={{ padding: '8px 12px' }}>TICKET</th>
+                            <th style={{ padding: '8px 12px' }}>FECHA</th>
+                            <th style={{ padding: '8px 12px', textAlign: 'center' }}>CANT. ITEMS</th>
+                            <th style={{ padding: '8px 12px', textAlign: 'center' }}>PAGO</th>
+                            <th style={{ padding: '8px 12px', textAlign: 'right' }}>TOTAL</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {clientPurchaseHistory.length === 0 ? (
+                            <tr>
+                              <td colSpan={5} style={{ textAlign: 'center', padding: '20px', color: 'var(--text-secondary)' }}>
+                                Sin compras registradas.
+                              </td>
+                            </tr>
+                          ) : (
+                            clientPurchaseHistory.map((sh, idx) => (
+                              <tr key={idx} style={{ borderBottom: '1px solid var(--border-color)', fontSize: '11.5px' }}>
+                                <td style={{ padding: '8px 12px', fontWeight: 800, fontFamily: 'monospace', color: 'var(--brand-primary)' }}>{sh.ticket}</td>
+                                <td style={{ padding: '8px 12px', color: 'var(--text-secondary)' }}>{sh.date}</td>
+                                <td style={{ padding: '8px 12px', textAlign: 'center', color: 'var(--text-primary)' }}>{sh.itemsCount}</td>
+                                <td style={{ padding: '8px 12px', textAlign: 'center' }}>
+                                  <span style={{ 
+                                    fontSize: '9px', 
+                                    fontWeight: 800, 
+                                    padding: '1px 6px', 
+                                    borderRadius: '50px', 
+                                    backgroundColor: sh.paymentMethod === 'CRÉDITO' ? 'rgba(239, 68, 68, 0.1)' : 'var(--brand-primary-light)', 
+                                    color: sh.paymentMethod === 'CRÉDITO' ? '#ef4444' : 'var(--brand-primary)' 
+                                  }}>
+                                    {sh.paymentMethod}
+                                  </span>
+                                </td>
+                                <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 800, color: 'var(--text-primary)' }}>${sh.total.toFixed(2)}</td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
                 </div>
               )}
 

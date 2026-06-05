@@ -44,6 +44,7 @@ const productSchema = {
     name: { type: 'string' },
     category: { type: 'string' },
     price: { type: 'number' },
+    wholesalePrice: { type: 'number' }, // Precio de venta al mayor ($)
     cost: { type: 'number' },
     stock: { type: 'number' },
     minStock: { type: 'number' },
@@ -81,6 +82,9 @@ const saleSchema = {
     },
     pendingSync: { type: 'boolean' }, // Control para replicación diferida
     dolarRate: { type: 'number' },
+    usdReceived: { type: 'number' },
+    vesReceived: { type: 'number' },
+    eurReceived: { type: 'number' },
     createdAt: { type: 'string' },
     updatedAt: { type: 'string' }
   },
@@ -98,6 +102,11 @@ const clientSchema = {
     name: { type: 'string' },
     email: { type: 'string' },
     phone: { type: 'string' },
+    address: { type: 'string' },
+    clientType: { type: 'string' }, // 'Detal' | 'Mayorista'
+    creditLimit: { type: 'number' },
+    creditBalance: { type: 'number' },
+    creditPayments: { type: 'string' }, // Historial de abonos (JSON string)
     updatedAt: { type: 'string' }
   },
   required: ['id', 'name', 'updatedAt']
@@ -242,6 +251,7 @@ export type ProductDocType = {
   name: string;
   category: string;
   price: number;
+  wholesalePrice?: number;
   cost: number;
   stock: number;
   minStock: number;
@@ -260,6 +270,9 @@ export type SaleDocType = {
   items: Array<{ productId: string; quantity: number; price: number }>;
   pendingSync: boolean;
   dolarRate: number;
+  usdReceived?: number;
+  vesReceived?: number;
+  eurReceived?: number;
   createdAt: string;
   updatedAt: string;
 };
@@ -269,6 +282,11 @@ export type ClientDocType = {
   name: string;
   email?: string;
   phone?: string;
+  address?: string;
+  clientType?: 'Detal' | 'Mayorista';
+  creditLimit?: number;
+  creditBalance?: number;
+  creditPayments?: string; // JSON de pagos
   updatedAt: string;
 };
 
@@ -360,7 +378,7 @@ let dbPromise: Promise<StockMasterDatabase> | null = null;
 // Inicializador único de la base de datos IndexedDB local
 export function getDatabase(): Promise<StockMasterDatabase> {
   if (!dbPromise) {
-    const currentDbName = 'stockmaster_local_db_v5';
+    const currentDbName = 'stockmaster_local_db_v7';
     const savedDbName = localStorage.getItem('active_rxdb_name');
     if (savedDbName !== currentDbName) {
       localStorage.removeItem('last_synced_at');
