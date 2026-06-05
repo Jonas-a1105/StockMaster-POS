@@ -25,6 +25,8 @@ const userSchema = {
     role: { type: 'string' },
     passwordHash: { type: 'string' }, // Hash encriptado de la contraseña
     pinHash: { type: 'string' },      // Hash encriptado del PIN rápido
+    baseSalary: { type: 'number' },   // Salario base por defecto ($)
+    commissionRate: { type: 'number' }, // Tasa de comisión sobre ventas (ej: 0.05 para 5%)
     updatedAt: { type: 'string' }
   },
   required: ['id', 'email', 'name', 'role', 'passwordHash', 'updatedAt']
@@ -153,7 +155,7 @@ const purchaseSchema = {
   required: ['id', 'supplierId', 'total', 'items', 'pendingSync', 'createdAt', 'updatedAt']
 };
 
-// 7. Esquema JSON de Nómina
+// 7. Esquema JSON de Nómina (Esquema Bimonetario)
 const payrollSchema = {
   title: 'payroll schema',
   version: 0,
@@ -170,6 +172,13 @@ const payrollSchema = {
     totalPaid: { type: 'number' },
     status: { type: 'string' },
     paymentDate: { type: 'string' },
+    dolarRate: { type: 'number' },           // Tasa bimonetaria
+    paymentCurrency: { type: 'string' },     // Moneda del pago (USD / VES / MIXTO)
+    paidInUSD: { type: 'number' },           // Total pagado en USD
+    paidInVES: { type: 'number' },           // Total pagado en VES
+    advancesUSD: { type: 'number' },         // Adelantos tomados en USD
+    advancesVES: { type: 'number' },         // Adelantos tomados en VES
+    paymentMethod: { type: 'string' },       // Transferencia / Efectivo / Pago Móvil / Mixto
     pendingSync: { type: 'boolean' },
     createdAt: { type: 'string' },
     updatedAt: { type: 'string' }
@@ -177,7 +186,28 @@ const payrollSchema = {
   required: ['id', 'employeeId', 'baseSalary', 'totalPaid', 'status', 'paymentDate', 'pendingSync', 'createdAt', 'updatedAt']
 };
 
-// 8. Esquema JSON de Auditoría local
+// 8. Esquema JSON de Asistencia / Turnos
+const attendanceSchema = {
+  title: 'attendance schema',
+  version: 0,
+  primaryKey: 'id',
+  type: 'object',
+  properties: {
+    id: { type: 'string', maxLength: 100 },
+    employeeId: { type: 'string' },
+    employeeName: { type: 'string' },
+    checkIn: { type: 'string' },
+    checkOut: { type: 'string' },
+    hoursWorked: { type: 'number' },
+    status: { type: 'string' },
+    pendingSync: { type: 'boolean' },
+    createdAt: { type: 'string' },
+    updatedAt: { type: 'string' }
+  },
+  required: ['id', 'employeeId', 'employeeName', 'checkIn', 'pendingSync', 'createdAt', 'updatedAt']
+};
+
+// 9. Esquema JSON de Auditoría local
 const auditLogSchema = {
   title: 'audit log schema',
   version: 0,
@@ -201,6 +231,8 @@ export type UserDocType = {
   role: string;
   passwordHash: string;
   pinHash?: string;
+  baseSalary?: number;
+  commissionRate?: number;
   updatedAt: string;
 };
 
@@ -276,6 +308,26 @@ export type PayrollDocType = {
   totalPaid: number;
   status: string;
   paymentDate: string;
+  dolarRate?: number;
+  paymentCurrency?: string;
+  paidInUSD?: number;
+  paidInVES?: number;
+  advancesUSD?: number;
+  advancesVES?: number;
+  paymentMethod?: string;
+  pendingSync: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AttendanceDocType = {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  checkIn: string;
+  checkOut?: string;
+  hoursWorked?: number;
+  status: string;
   pendingSync: boolean;
   createdAt: string;
   updatedAt: string;
@@ -297,6 +349,7 @@ export type StockMasterCollections = {
   suppliers: RxCollection<SupplierDocType>;
   purchases: RxCollection<PurchaseDocType>;
   payroll: RxCollection<PayrollDocType>;
+  attendance: RxCollection<AttendanceDocType>;
   auditLogs: RxCollection<AuditLogDocType>;
 };
 
@@ -307,7 +360,7 @@ let dbPromise: Promise<StockMasterDatabase> | null = null;
 // Inicializador único de la base de datos IndexedDB local
 export function getDatabase(): Promise<StockMasterDatabase> {
   if (!dbPromise) {
-    const currentDbName = 'stockmaster_local_db_v4';
+    const currentDbName = 'stockmaster_local_db_v5';
     const savedDbName = localStorage.getItem('active_rxdb_name');
     if (savedDbName !== currentDbName) {
       localStorage.removeItem('last_synced_at');
@@ -331,6 +384,7 @@ export function getDatabase(): Promise<StockMasterDatabase> {
         suppliers: { schema: supplierSchema },
         purchases: { schema: purchaseSchema },
         payroll: { schema: payrollSchema },
+        attendance: { schema: attendanceSchema },
         auditLogs: { schema: auditLogSchema }
       });
 
