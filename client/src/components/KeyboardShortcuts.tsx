@@ -7,6 +7,7 @@ interface KeyboardShortcutsProps {
   onOpenCalculator: () => void;
   onToggleTheme: () => void;
   onFocusSearch: () => void;
+  role: string;
 }
 
 interface Shortcut {
@@ -23,16 +24,25 @@ export default function KeyboardShortcuts({
   onOpenCalculator,
   onToggleTheme,
   onFocusSearch,
+  role,
 }: KeyboardShortcutsProps) {
   const [showHelp, setShowHelp] = useState(false);
+
+  const ALLOWED_TABS: Record<string, string[]> = {
+    ADMIN: ['dashboard', 'pos', 'inventario', 'compras', 'nomina', 'clientes', 'proveedores', 'cierre', 'analiticas', 'auditoria', 'settings'],
+    AUDITOR: ['dashboard', 'inventario', 'clientes', 'proveedores', 'analiticas', 'auditoria'],
+    CASHIER: ['pos', 'cierre']
+  };
+
+  const allowed = ALLOWED_TABS[role] || [];
 
   // Define shortcuts
   const shortcuts: Shortcut[] = [
     { key: 'F1', label: 'F1', description: 'Buscar producto (foco en barra de búsqueda)', action: onFocusSearch, scope: 'global' },
     { key: 'F2', label: 'F2', description: 'Abrir Calculadora de Tasa / Multidivisa', action: onOpenCalculator, scope: 'global' },
-    { key: 'F3', label: 'F3', description: 'Cambiar a Ventas POS', action: () => setActiveTab('pos'), scope: 'global' },
-    { key: 'F4', label: 'F4', description: 'Cambiar a Inventario', action: () => setActiveTab('inventario'), scope: 'global' },
-    { key: 'F5', label: 'F5', description: 'Cambiar a Resumen / Dashboard', action: () => setActiveTab('dashboard'), scope: 'global' },
+    ...(allowed.includes('pos') ? [{ key: 'F3', label: 'F3', description: 'Cambiar a Ventas POS', action: () => setActiveTab('pos'), scope: 'global' as const }] : []),
+    ...(allowed.includes('inventario') ? [{ key: 'F4', label: 'F4', description: 'Cambiar a Inventario', action: () => setActiveTab('inventario'), scope: 'global' as const }] : []),
+    ...(allowed.includes('dashboard') ? [{ key: 'F5', label: 'F5', description: 'Cambiar a Resumen / Dashboard', action: () => setActiveTab('dashboard'), scope: 'global' as const }] : []),
     { key: 'F8', label: 'F8', description: 'Alternar tema claro / oscuro', action: onToggleTheme, scope: 'global' },
     { key: '?', label: 'Shift + ?', description: 'Mostrar / ocultar este panel de ayuda', action: () => setShowHelp(prev => !prev), scope: 'global' },
   ];

@@ -67,6 +67,8 @@ body.light-theme {
   --transition-speed: 0.3s;
   --transition-ease: cubic-bezier(0.4, 0, 0.2, 1);
   --glass-blur: 16px;
+  --app-border-width: 1.5px;
+  --app-border-style: solid;
 }
 
 * {
@@ -113,7 +115,7 @@ body {
   justify-content: space-between;
   flex-shrink: 0;
   z-index: 100;
-  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.3s ease, border-color 0.3s ease;
+  transition: width 0.35s cubic-bezier(0, 0, 0.2, 1), background-color 0.35s ease, border-color 0.35s ease;
 }
 
 .sidebar.expanded {
@@ -272,6 +274,7 @@ body {
   flex-direction: column;
   padding: 0 var(--main-padding, 40px) var(--main-padding, 40px) var(--main-padding, 40px); /* Changed top padding to 0 so the sticky header sits perfectly flush! */
   overflow-y: auto;
+  overflow-x: hidden;
   gap: var(--grid-gap, 28px);
   background-color: var(--bg-primary);
   transition: background-color var(--transition-speed) var(--transition-ease);
@@ -330,6 +333,28 @@ body {
   background-color: var(--bg-card);
   box-shadow: 0 0 0 1.5px var(--accent-yellow);
 }
+
+/* POS View Search Bar & Camera Button Alignment */
+.pos-search-container {
+  height: 48px !important;
+}
+
+.pos-search-input {
+  height: 100% !important;
+  padding: 0 18px 0 50px !important;
+}
+
+.pos-camera-btn {
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  width: 48px !important;
+  height: 48px !important;
+  padding: 0 !important;
+  border-radius: var(--button-radius, 12px) !important;
+  flex-shrink: 0;
+}
+
 
 .script-title {
   font-family: var(--font-script);
@@ -425,6 +450,7 @@ body {
   grid-template-columns: 1fr 320px;
   gap: var(--grid-gap, 28px);
   width: 100%;
+  align-items: start;
 }
 
 .dashboard-grid > * {
@@ -780,22 +806,17 @@ body {
   color: var(--text-muted);
 }
 
-/* Yellow highlighted row wrapper */
+/* Yellow highlighted row wrapper (disabled in favor of dynamic highlight) */
 .calendar-highlight-bar {
-  grid-column: 1 / 6; /* covers S M T W T (days 3,4,5,6,7 which are columns 1 to 5) */
-  grid-row: 2; /* row containing day 3 to 7 */
-  background-color: var(--accent-yellow);
-  height: 26px;
-  border-radius: 50px;
-  position: absolute;
-  left: 2px;
-  right: 2px;
-  z-index: 1;
+  display: none;
 }
 
 .calendar-cell.highlighted {
-  color: #121214;
-  font-weight: 850;
+  background-color: rgba(32, 227, 178, 0.15) !important;
+  color: var(--brand-teal, #20e3b2) !important;
+  border: 1.5px solid rgba(32, 227, 178, 0.45) !important;
+  box-shadow: 0 0 8px rgba(32, 227, 178, 0.35);
+  font-weight: 800;
 }
 
 .calendar-cell.selected-active {
@@ -804,11 +825,24 @@ body {
   font-weight: 850;
 }
 
+select.dropdown-select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'></polyline></svg>");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 12px;
+  padding-right: 24px !important;
+  cursor: pointer;
+}
+
 /* Bottom Grid Row */
 .bottom-row {
   display: grid;
   grid-template-columns: 240px 1fr;
   gap: var(--grid-gap, 28px);
+  align-items: start;
 }
 
 .bottom-row > * {
@@ -999,7 +1033,7 @@ body {
 /* Right Column Sidebar Panel */
 .right-sidebar {
   width: 320px;
-  height: 100%;
+  height: auto;
   display: flex;
   flex-direction: column;
   gap: 28px;
@@ -2795,7 +2829,6 @@ body.light-theme.card-glassmorphism .widget {
 /* ── Premium Glass Noise Overlay ── */
 body.glass-noise-enabled .widget {
   position: relative;
-  overflow: hidden;
 }
 
 body.glass-noise-enabled .widget::after {
@@ -2805,6 +2838,7 @@ body.glass-noise-enabled .widget::after {
   pointer-events: none;
   opacity: 0.025; /* ultra subtle elegant noise overlay */
   z-index: 1;
+  border-radius: inherit;
   background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
 }
 
@@ -2939,7 +2973,7 @@ body.glass-noise-enabled .widget::after {
   }
 
   body.header-fixed .main-content {
-    padding-top: 54px !important; /* Offset header height on mobile when fixed */
+    padding-top: calc(54px + 16px) !important; /* Offset header height + 16px separation gap */
   }
 
   /* If Header is set to STATIC */
@@ -2960,7 +2994,7 @@ body.glass-noise-enabled .widget::after {
   }
 
   body.header-static .main-content {
-    padding-top: 0 !important;
+    padding-top: 16px !important; /* 16px separation gap when header is static */
   }
 
   .sidebar-overlay-trigger {
@@ -3166,6 +3200,108 @@ body.glass-noise-enabled .widget::after {
     overflow-x: hidden !important;
   }
 
+  /* ============================================================
+     VIEW-HEADER-WIDGET MOBILE OVERHAUL
+     Fix overflow, wrapping, and alignment for all view headers
+     ============================================================ */
+  .view-header-widget {
+    overflow: visible !important;
+    max-width: 100% !important;
+    padding: 14px !important;
+  }
+
+  /* Main container: stack vertically */
+  .view-header-widget > div {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 10px !important;
+  }
+
+  /* Left side: pills row - wrap naturally */
+  .view-header-widget > div > div:first-child {
+    display: flex !important;
+    align-items: center !important;
+    gap: 6px !important;
+    flex-wrap: wrap !important;
+    width: 100% !important;
+  }
+
+  /* Right side: controls row - stack vertically */
+  .view-header-widget > div > div:nth-child(2) {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 8px !important;
+    width: 100% !important;
+  }
+
+  /* Search bar inside view-header → full width */
+  .view-header-widget .search-container {
+    width: 100% !important;
+    max-width: 100% !important;
+    height: 40px !important;
+    order: 1 !important;
+  }
+
+  .view-header-widget .search-input {
+    width: 100% !important;
+    height: 40px !important;
+    font-size: 12px !important;
+  }
+
+  /* Action buttons row inside controls → horizontal row */
+  .view-header-widget > div > div:nth-child(2) > .btn-yellow,
+  .view-header-widget > div > div:nth-child(2) > .btn-pill-dark,
+  .view-header-widget > div > div:nth-child(2) > button {
+    width: 100% !important;
+    justify-content: center !important;
+    order: 2 !important;
+  }
+
+  /* Pills compact on mobile */
+  .view-header-pill {
+    font-size: 10px !important;
+    padding: 3px 8px !important;
+    white-space: nowrap !important;
+  }
+
+  /* Period group (Analíticas: Hoy/7Días/30Días/Año) → wrap */
+  .view-header-widget .btn-pill-group {
+    flex-wrap: wrap !important;
+    width: 100% !important;
+    justify-content: center !important;
+  }
+
+  .view-header-widget .btn-pill-group button {
+    flex: 1 1 auto !important;
+    min-width: 50px !important;
+    text-align: center !important;
+    font-size: 10px !important;
+    padding: 5px 8px !important;
+  }
+
+  /* Date pickers in Analíticas → full width stack */
+  .view-header-widget div[style*="display: flex"][style*="gap: 6px"][style*="font-size: 11px"] {
+    flex-direction: column !important;
+    gap: 6px !important;
+    width: 100% !important;
+  }
+
+  .view-header-widget div[style*="display: flex"][style*="gap: 6px"][style*="font-size: 11px"] > span {
+    text-align: center !important;
+  }
+
+  .view-header-widget .custom-date-picker,
+  .view-header-widget div[style*="width: 160px"] {
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  /* Info tooltip icon → keep compact */
+  .view-header-widget .info-tooltip-wrapper {
+    flex-shrink: 0 !important;
+  }
+
   .widget-header {
     flex-direction: column !important;
     align-items: flex-start !important;
@@ -3237,6 +3373,16 @@ body.glass-noise-enabled .widget::after {
     max-width: 100% !important;
   }
 
+  .pos-search-container {
+    height: 42px !important;
+  }
+
+  .pos-camera-btn {
+    height: 42px !important;
+    width: 42px !important;
+  }
+
+
   /* 12. AUDITORIA ARCHITECTURE PANEL: flex row → column */
   div[style*="align-items: center"][style*="justify-content: space-between"][style*="gap: 20px"] {
     flex-direction: column !important;
@@ -3249,8 +3395,8 @@ body.glass-noise-enabled .widget::after {
     width: 30px !important;
   }
 
-  /* 13. FILTER BARS AND CONTROL ROWS */
-  div[style*="justify-content: space-between"][style*="gap: 16px"][style*="flex-wrap: wrap"] {
+  /* 13. FILTER BARS AND CONTROL ROWS (exclude view-header-widget, handled above) */
+  :not(.view-header-widget) > div[style*="justify-content: space-between"][style*="gap: 16px"][style*="flex-wrap: wrap"] {
     flex-direction: column !important;
     align-items: stretch !important;
     gap: 12px !important;
@@ -3429,7 +3575,7 @@ body.glass-noise-enabled .widget::after {
     padding: 20px 20px 30px 20px !important;
     z-index: 1301 !important;
     transform: translateY(100%) !important;
-    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+    transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1) !important;
     box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.3) !important;
     max-height: 80vh !important;
     overflow-y: auto !important;
@@ -4221,6 +4367,853 @@ body.light-theme .calc-key:hover {
     display: none !important;
   }
 }
+
+/* ==========================================================================
+   GLOBAL BORDERS CONFIGURATOR & CUSTOMIZER OVERRIDES
+   ========================================================================== */
+
+/* 1. When borders are disabled, force all borders and outlines to 0/none */
+body.borders-disabled *,
+body.borders-disabled *::before,
+body.borders-disabled *::after {
+  border-width: 0px !important;
+  border-style: none !important;
+  outline-width: 0px !important;
+}
+
+/* 2. When borders are enabled, dynamically override only the border-width
+      of elements that are intended to have borders, using the theme variable */
+body.borders-enabled .widget,
+body.borders-enabled .overview-card,
+body.borders-enabled .petshop-card,
+body.borders-enabled .search-input,
+body.borders-enabled .dropdown-select,
+body.borders-enabled input,
+body.borders-enabled select,
+body.borders-enabled textarea,
+body.borders-enabled button,
+body.borders-enabled .btn-pill-dark,
+body.borders-enabled .btn-pill-light,
+body.borders-enabled .btn-pill,
+body.borders-enabled .sidebar-toggle-btn,
+body.borders-enabled .mobile-nav-btn,
+body.borders-enabled .status-badge,
+body.borders-enabled .nav-item,
+body.borders-enabled .calendar-cell.highlighted,
+body.borders-enabled .calendar-cell.selected-active,
+body.borders-enabled .rate-calculator-modal,
+body.borders-enabled .calc-key,
+body.borders-enabled kbd {
+  border-width: var(--app-border-width, 1.5px) !important;
+}
+
+/* Specific support for table row/cell borders when enabled */
+body.borders-enabled table,
+body.borders-enabled th,
+body.borders-enabled td,
+body.borders-enabled tr {
+  border-bottom-width: var(--app-border-width, 1.5px) !important;
+}
+
+/* ==========================================================================
+   SCROLLBAR & POPUPS CUSTOMIZER CSS STYLES
+   ========================================================================== */
+
+/* 1. Custom Scrollbars under custom-scrollbar-enabled viewport and body */
+html.custom-scrollbar-enabled::-webkit-scrollbar,
+body.custom-scrollbar-enabled::-webkit-scrollbar,
+body.custom-scrollbar-enabled *::-webkit-scrollbar {
+  width: var(--app-scrollbar-size, 6px) !important;
+  height: var(--app-scrollbar-size, 6px) !important;
+}
+
+html.custom-scrollbar-enabled::-webkit-scrollbar-track,
+body.custom-scrollbar-enabled::-webkit-scrollbar-track,
+body.custom-scrollbar-enabled *::-webkit-scrollbar-track {
+  background: transparent !important;
+}
+
+html.custom-scrollbar-enabled::-webkit-scrollbar-thumb,
+body.custom-scrollbar-enabled::-webkit-scrollbar-thumb,
+body.custom-scrollbar-enabled *::-webkit-scrollbar-thumb {
+  background: var(--border-color, #1e1e24) !important;
+  border-radius: 20px !important;
+  border: none !important;
+  transition: background 0.2s ease !important;
+}
+
+html.custom-scrollbar-enabled::-webkit-scrollbar-thumb:hover,
+body.custom-scrollbar-enabled::-webkit-scrollbar-thumb:hover,
+body.custom-scrollbar-enabled *::-webkit-scrollbar-thumb:hover {
+  background: var(--brand-primary, #0ea5a4) !important;
+}
+
+html.custom-scrollbar-enabled,
+body.custom-scrollbar-enabled,
+body.custom-scrollbar-enabled * {
+  scrollbar-width: thin !important;
+  scrollbar-color: var(--border-color, #1e1e24) transparent !important;
+}
+
+/* 2. Global Select element styling reset & premium formatting */
+select {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  -moz-appearance: none !important;
+  background-image: url("data:image/svg+xml;utf8,%3csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e") !important;
+  background-repeat: no-repeat !important;
+  background-position: right 12px center !important;
+  background-size: 14px !important;
+  padding-right: 36px !important;
+  cursor: pointer !important;
+  font-family: var(--font-main) !important;
+  border-radius: var(--input-radius, 12px) !important;
+  border: var(--app-border-width, 1.5px) solid var(--border-color) !important;
+  color: var(--text-primary) !important;
+  outline: none !important;
+  transition: all 0.2s ease !important;
+}
+
+select:hover {
+  border-color: var(--border-active) !important;
+  background-color: var(--bg-primary) !important;
+}
+
+select:focus {
+  border-color: var(--brand-primary) !important;
+  box-shadow: 0 0 0 3px var(--brand-primary-light) !important;
+}
+
+/* 3. Custom Popups and Dropdowns base styling */
+.premium-popup {
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.35) !important;
+  border-radius: 14px !important;
+  padding: 6px !important;
+  z-index: 1000 !important;
+  border: var(--app-border-width, 1.5px) solid var(--border-color) !important;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+/* Glassmorphism style */
+html.popup-glassmorphism .premium-popup,
+body.popup-glassmorphism .premium-popup,
+html.popup-glassmorphism select,
+body.popup-glassmorphism select {
+  background-color: var(--app-popup-bg-glass) !important;
+  backdrop-filter: blur(var(--app-popup-blur, 12px)) !important;
+  -webkit-backdrop-filter: blur(var(--app-popup-blur, 12px)) !important;
+}
+
+/* Solid style */
+html.popup-solid .premium-popup,
+body.popup-solid .premium-popup,
+html.popup-solid select,
+body.popup-solid select {
+  background-color: var(--bg-card, #141417) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* Bordered style */
+html.popup-bordered .premium-popup,
+body.popup-bordered .premium-popup,
+html.popup-bordered select,
+body.popup-bordered select {
+  background-color: var(--bg-primary, #0e0e10) !important;
+  border-color: var(--brand-primary, #0ea5a4) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* Ensure all options in select elements have readable background */
+select option {
+  background-color: var(--bg-card, #141417) !important;
+  color: var(--text-primary, #ffffff) !important;
+  font-weight: 600 !important;
+}
+
+/* ── CustomSelect Component Styles ── */
+.custom-select-container {
+  position: relative;
+  outline: none;
+  display: inline-block;
+  user-select: none;
+}
+
+.custom-select-trigger {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 12px;
+  border-radius: var(--input-radius, 12px);
+  border: var(--app-border-width, 1.5px) solid var(--border-color);
+  background-color: var(--bg-input);
+  color: var(--text-primary);
+  font-family: var(--font-main);
+  font-weight: 700;
+  cursor: pointer;
+  outline: none;
+  transition: all 0.2s ease;
+  min-height: 32px;
+}
+
+.custom-select-trigger:hover,
+.custom-select-trigger.active {
+  border-color: var(--border-active);
+  background-color: var(--bg-primary);
+}
+
+.custom-select-trigger:focus {
+  border-color: var(--brand-primary);
+  box-shadow: 0 0 0 3px var(--brand-primary-light);
+}
+
+.custom-select-trigger-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.custom-select-trigger-icon {
+  display: flex;
+  align-items: center;
+}
+
+.custom-select-trigger-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.custom-select-arrow {
+  margin-left: 8px;
+  color: var(--text-secondary);
+  transition: transform 0.2s ease;
+}
+
+.custom-select-arrow.open {
+  transform: rotate(180deg);
+  color: var(--text-primary);
+}
+
+/* Floating custom options list panel */
+.custom-select-options-list {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  min-width: 100%;
+  max-height: 160px;
+  overflow-y: auto;
+  z-index: 1600 !important;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* Specific styling for options popup when glassmorphism/solid/bordered are applied to select */
+html.popup-glassmorphism .custom-select-options-list,
+body.popup-glassmorphism .custom-select-options-list {
+  background-color: var(--app-popup-bg-glass) !important;
+  backdrop-filter: blur(var(--app-popup-blur, 12px)) !important;
+  -webkit-backdrop-filter: blur(var(--app-popup-blur, 12px)) !important;
+}
+
+html.popup-solid .custom-select-options-list,
+body.popup-solid .custom-select-options-list {
+  background-color: var(--bg-card, #141417) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+html.popup-bordered .custom-select-options-list,
+body.popup-bordered .custom-select-options-list {
+  background-color: var(--bg-primary, #0e0e10) !important;
+  border-color: var(--brand-primary, #0ea5a4) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* Options */
+.custom-select-option {
+  padding: 8px 12px;
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-family: var(--font-main);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.custom-select-option:hover,
+.custom-select-option.active {
+  background-color: var(--bg-input, #1c1c22);
+  color: var(--brand-primary, #0ea5a4);
+}
+
+.custom-select-option.selected {
+  background-color: var(--brand-primary);
+  color: #121214 !important;
+  font-weight: 800;
+}
+
+.custom-select-trigger.disabled {
+  background-color: rgba(255, 255, 255, 0.05) !important;
+  cursor: not-allowed !important;
+  opacity: 0.65 !important;
+  border-color: var(--border-color) !important;
+}
+
+.light-theme .custom-select-trigger.disabled {
+  background-color: rgba(0, 0, 0, 0.03) !important;
+}
+
+/* ── CustomDatePicker Component Styles ── */
+.custom-datepicker-container {
+  position: relative;
+  outline: none;
+  display: inline-block;
+  user-select: none;
+}
+
+.custom-datepicker-trigger {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: var(--input-radius, 12px);
+  border: var(--app-border-width, 1.5px) solid var(--border-color);
+  background-color: var(--bg-input);
+  color: var(--text-primary);
+  font-family: var(--font-main);
+  font-weight: 700;
+  cursor: pointer;
+  outline: none;
+  transition: all 0.2s ease;
+  min-height: 40px;
+  box-sizing: border-box;
+}
+
+.custom-datepicker-trigger:hover,
+.custom-datepicker-trigger.active {
+  border-color: var(--border-active);
+  background-color: var(--bg-primary);
+}
+
+.custom-datepicker-trigger:focus {
+  border-color: var(--brand-primary);
+  box-shadow: 0 0 0 3px var(--brand-primary-light);
+}
+
+.custom-datepicker-trigger-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.custom-datepicker-trigger-icon-svg {
+  color: var(--brand-primary);
+  flex-shrink: 0;
+}
+
+.custom-datepicker-trigger-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 11px;
+}
+
+/* Floating custom calendar popup panel */
+.custom-datepicker-popup {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  width: 280px;
+  padding: 14px;
+  border-radius: var(--card-radius, 16px);
+  z-index: 1600 !important;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4);
+  box-sizing: border-box;
+}
+
+/* Specific styling for datepicker popup when glassmorphism/solid/bordered are applied */
+html.popup-glassmorphism .custom-datepicker-popup,
+body.popup-glassmorphism .custom-datepicker-popup {
+  background-color: var(--app-popup-bg-glass) !important;
+  backdrop-filter: blur(var(--app-popup-blur, 12px)) !important;
+  -webkit-backdrop-filter: blur(var(--app-popup-blur, 12px)) !important;
+  border: var(--app-border-width, 1.5px) solid var(--border-color) !important;
+}
+
+html.popup-solid .custom-datepicker-popup,
+body.popup-solid .custom-datepicker-popup {
+  background-color: var(--bg-card, #141417) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border: var(--app-border-width, 1.5px) solid var(--border-color) !important;
+}
+
+html.popup-bordered .custom-datepicker-popup,
+body.popup-bordered .custom-datepicker-popup {
+  background-color: var(--bg-primary, #0e0e10) !important;
+  border: var(--app-border-width, 1.5px) solid var(--brand-primary, #0ea5a4) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* Datepicker Header */
+.custom-datepicker-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.custom-datepicker-month-year {
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--text-primary);
+  text-transform: capitalize;
+}
+
+.custom-datepicker-nav-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.custom-datepicker-nav-btn:hover {
+  background-color: var(--bg-input);
+  color: var(--text-primary);
+}
+
+/* Weekdays */
+.custom-datepicker-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+  text-align: center;
+  margin-bottom: 8px;
+}
+
+.custom-datepicker-weekday {
+  font-size: 10px;
+  font-weight: 800;
+  color: var(--text-secondary);
+}
+
+/* Days Grid */
+.custom-datepicker-days {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+}
+
+/* Day Cell */
+.custom-datepicker-day {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  width: 100%;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  box-sizing: border-box;
+}
+
+.custom-datepicker-day:hover {
+  background-color: var(--bg-input);
+  color: var(--brand-primary);
+}
+
+.custom-datepicker-day.other-month {
+  color: var(--text-muted, #555) !important;
+  opacity: 0.35;
+}
+
+.custom-datepicker-day.selected {
+  background-color: var(--brand-primary) !important;
+  color: #121214 !important;
+  font-weight: 800 !important;
+}
+
+.custom-datepicker-day.today {
+  border: 1.5px dashed var(--brand-gold, #fbbf24) !important;
+  color: var(--text-primary);
+}
+
+.custom-datepicker-day.today.selected {
+  border: 1.5px dashed var(--text-primary) !important;
+  color: #121214 !important;
+}
+
+/* Footer */
+.custom-datepicker-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-color);
+}
+
+.custom-datepicker-btn {
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  transition: all 0.15s ease;
+}
+
+.custom-datepicker-btn.clear {
+  color: var(--brand-gold, #fbbf24);
+}
+
+.custom-datepicker-btn.clear:hover {
+  background-color: rgba(251, 191, 36, 0.1);
+}
+
+.custom-datepicker-btn.today-btn {
+  color: var(--brand-primary);
+}
+
+.custom-datepicker-btn.today-btn:hover {
+  background-color: var(--brand-primary-light);
+}
+
+.custom-datepicker-container.disabled {
+  cursor: not-allowed !important;
+  opacity: 0.65 !important;
+}
+
+.custom-datepicker-trigger.disabled {
+  background-color: rgba(255, 255, 255, 0.05) !important;
+  cursor: not-allowed !important;
+  border-color: var(--border-color) !important;
+}
+
+.light-theme .custom-datepicker-trigger.disabled {
+  background-color: rgba(0, 0, 0, 0.03) !important;
+}
+
+/* ── Mobile Modal Styles ── */
+@media (max-width: 768px) {
+  /* ── 1. STYLE: body.mobile-modal-panel (PC-style Centered Modal) ── */
+  body.mobile-modal-panel .modal-registration-backdrop,
+  body.mobile-modal-panel div[style*="z-index: 1500"]:has(form),
+  body.mobile-modal-panel div[style*="zIndex: 1500"]:has(form) {
+    display: flex !important;
+    justify-content: center !important;
+    align-items: center !important;
+    flex-direction: column !important;
+    padding: 16px !important;
+    backdrop-filter: blur(8px) !important;
+    animation: modalFadeInMobile 0.25s ease-out forwards !important;
+  }
+
+  body.mobile-modal-panel .modal-registration-backdrop > .modal-registration-content,
+  body.mobile-modal-panel .modal-registration-backdrop > .widget,
+  body.mobile-modal-panel div[style*="z-index: 1500"]:has(form) > .widget,
+  body.mobile-modal-panel div[style*="zIndex: 1500"]:has(form) > .widget {
+    width: 95% !important;
+    max-width: 540px !important;
+    height: auto !important;
+    max-height: 90vh !important;
+    margin: auto !important;
+    border-radius: var(--card-radius, 24px) !important;
+    border: 1.5px solid var(--border-color) !important;
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4) !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important; /* Prevent outer card from generating scrollbar */
+    animation: modalSlideInMobile 0.4s cubic-bezier(0.25, 1, 0.5, 1) forwards !important;
+  }
+
+  body.mobile-modal-panel .modal-registration-backdrop form,
+  body.mobile-modal-panel .modal-registration-content form {
+    flex: 1 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+    min-height: 0 !important;
+  }
+
+  body.mobile-modal-panel .modal-registration-backdrop form > div:first-of-type,
+  body.mobile-modal-panel .modal-registration-content form > div:first-of-type {
+    flex: 1 !important;
+    overflow-y: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    padding: 20px 24px !important;
+  }
+
+  body.mobile-modal-panel .modal-registration-backdrop form > div:last-of-type,
+  body.mobile-modal-panel .modal-registration-content form > div:last-of-type {
+    position: relative !important;
+    bottom: auto !important;
+    left: auto !important;
+    right: auto !important;
+    width: auto !important;
+    z-index: 1 !important;
+    padding: 16px 24px !important;
+    margin-top: auto !important;
+  }
+
+  /* ── 2. STYLE: body.mobile-modal-standard (Original Full-Screen Mobile Modal) ── */
+  body.mobile-modal-standard .modal-registration-backdrop,
+  body.mobile-modal-standard div[style*="z-index: 1500"]:has(form),
+  body.mobile-modal-standard div[style*="zIndex: 1500"]:has(form) {
+    display: flex !important;
+    justify-content: flex-start !important;
+    align-items: stretch !important;
+    flex-direction: column !important;
+    padding: 0 !important;
+    backdrop-filter: blur(8px) !important;
+    animation: modalFadeInMobile 0.25s ease-out forwards !important;
+  }
+
+  body.mobile-modal-standard .modal-registration-backdrop > .modal-registration-content,
+  body.mobile-modal-standard .modal-registration-backdrop > .widget,
+  body.mobile-modal-standard div[style*="z-index: 1500"]:has(form) > .widget,
+  body.mobile-modal-standard div[style*="zIndex: 1500"]:has(form) > .widget {
+    flex: 1 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    height: 100% !important;
+    max-height: 100vh !important;
+    margin: 0 !important;
+    border-radius: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+    animation: modalSlideUpFullMobile 0.4s cubic-bezier(0.25, 1, 0.5, 1) forwards !important;
+  }
+
+  body.mobile-modal-standard .modal-registration-backdrop form,
+  body.mobile-modal-standard .modal-registration-content form {
+    flex: 1 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+    min-height: 0 !important;
+  }
+
+  body.mobile-modal-standard .modal-registration-backdrop form > div:first-of-type,
+  body.mobile-modal-standard .modal-registration-content form > div:first-of-type {
+    flex: 1 !important;
+    overflow-y: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    padding: 24px 24px 90px 24px !important; /* 90px bottom padding to prevent fixed footer overlap */
+  }
+
+  body.mobile-modal-standard .modal-registration-backdrop form > div:last-of-type,
+  body.mobile-modal-standard .modal-registration-content form > div:last-of-type {
+    position: fixed !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    width: 100% !important;
+    z-index: 10 !important;
+    padding: 16px 24px !important;
+  }
+}
+
+@keyframes modalSlideInMobile {
+  from {
+    transform: translate3d(100%, 0, 0);
+  }
+  to {
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes modalSlideUpFullMobile {
+  from {
+    transform: translate3d(0, 100%, 0);
+  }
+  to {
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes modalFadeInMobile {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* ==========================================================================
+   VIEW HEADER CUSTOMIZER & TOOLTIP DESCRIPTIONS
+   ========================================================================== */
+
+/* 1. Tooltips de Información (.info-tooltip-wrapper) */
+.info-tooltip-wrapper {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  margin-right: 12px;
+}
+
+.info-tooltip-icon {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.info-tooltip-wrapper:hover .info-tooltip-icon {
+  opacity: 1 !important;
+  transform: scale(1.1);
+}
+
+.info-tooltip-wrapper .tooltip-text {
+  visibility: hidden;
+  width: 280px;
+  background-color: var(--bg-card);
+  color: var(--text-primary);
+  text-align: left;
+  border-radius: 12px;
+  padding: 12px 16px;
+  position: absolute;
+  z-index: 1000;
+  bottom: auto;
+  top: 130%;
+  left: 0;
+  opacity: 0;
+  transition: opacity 0.25s cubic-bezier(0.4, 0, 0.2, 1), transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  transform: translateY(6px);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.5;
+  border: 1.5px solid var(--border-color);
+  box-shadow: var(--card-shadow);
+  pointer-events: none;
+}
+
+/* Tooltip light mode styling override when body.light-theme is present */
+body.light-theme .info-tooltip-wrapper .tooltip-text {
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+}
+
+.info-tooltip-wrapper:hover .tooltip-text {
+  visibility: visible;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Permanently Floating View Header Style */
+.view-header-widget {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  padding-top: 8px !important;
+  padding-bottom: 8px !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.view-header-widget::after {
+  content: none !important;
+  display: none !important;
+}
+
+/* ==========================================================================
+   VIEW HEADER INFO PILLS STYLING
+   ========================================================================== */
+.view-header-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 800;
+  padding: 5px 12px;
+  border-radius: 100px;
+  letter-spacing: 0.2px;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  animation: entrance 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* 1. Style variants depending on body classes */
+/* flat */
+body.pill-style-flat .view-header-pill.pill-teal { background-color: rgba(14, 165, 164, 0.1); color: var(--brand-teal); }
+body.pill-style-flat .view-header-pill.pill-red { background-color: rgba(239, 68, 68, 0.1); color: #ef4444; }
+body.pill-style-flat .view-header-pill.pill-yellow { background-color: rgba(245, 158, 11, 0.1); color: #f59e0b; }
+body.pill-style-flat .view-header-pill.pill-purple { background-color: rgba(168, 85, 247, 0.1); color: #a855f7; }
+body.pill-style-flat .view-header-pill.pill-green { background-color: rgba(34, 197, 94, 0.1); color: #22c55e; }
+
+/* filled */
+body.pill-style-filled .view-header-pill.pill-teal { background-color: var(--brand-teal); color: #fff; }
+body.pill-style-filled .view-header-pill.pill-red { background-color: #ef4444; color: #fff; }
+body.pill-style-filled .view-header-pill.pill-yellow { background-color: #f59e0b; color: #fff; }
+body.pill-style-filled .view-header-pill.pill-purple { background-color: #a855f7; color: #fff; }
+body.pill-style-filled .view-header-pill.pill-green { background-color: #22c55e; color: #fff; }
+
+/* bordered */
+body.pill-style-bordered .view-header-pill { border: 1.5px solid transparent; }
+body.pill-style-bordered .view-header-pill.pill-teal { border-color: var(--brand-teal); color: var(--brand-teal); background-color: transparent; }
+body.pill-style-bordered .view-header-pill.pill-red { border-color: #ef4444; color: #ef4444; background-color: transparent; }
+body.pill-style-bordered .view-header-pill.pill-yellow { border-color: #f59e0b; color: #f59e0b; background-color: transparent; }
+body.pill-style-bordered .view-header-pill.pill-purple { border-color: #a855f7; color: #a855f7; background-color: transparent; }
+body.pill-style-bordered .view-header-pill.pill-green { border-color: #22c55e; color: #22c55e; background-color: transparent; }
+
+/* glow */
+body.pill-style-glow .view-header-pill { border: 1.5px solid transparent; }
+body.pill-style-glow .view-header-pill.pill-teal { border-color: var(--brand-teal); color: var(--brand-teal); background-color: rgba(14, 165, 164, 0.05); box-shadow: 0 0 10px rgba(14, 165, 164, 0.25); }
+body.pill-style-glow .view-header-pill.pill-red { border-color: #ef4444; color: #ef4444; background-color: rgba(239, 68, 68, 0.05); box-shadow: 0 0 10px rgba(239, 68, 68, 0.25); }
+body.pill-style-glow .view-header-pill.pill-yellow { border-color: #f59e0b; color: #f59e0b; background-color: rgba(245, 158, 11, 0.05); box-shadow: 0 0 10px rgba(245, 158, 11, 0.25); }
+body.pill-style-glow .view-header-pill.pill-purple { border-color: #a855f7; color: #a855f7; background-color: rgba(168, 85, 247, 0.05); box-shadow: 0 0 10px rgba(168, 85, 247, 0.25); }
+body.pill-style-glow .view-header-pill.pill-green { border-color: #22c55e; color: #22c55e; background-color: rgba(34, 197, 94, 0.05); box-shadow: 0 0 10px rgba(34, 197, 94, 0.25); }
+
+/* 2. Animations */
+/* pulse */
+@keyframes pillPulseAnim {
+  0% { transform: scale(1); opacity: 0.95; }
+  50% { transform: scale(1.04); opacity: 1; box-shadow: 0 0 14px rgba(14, 165, 164, 0.2); }
+  100% { transform: scale(1); opacity: 0.95; }
+}
+body.pill-anim-pulse .view-header-pill {
+  animation: pillPulseAnim 2.5s infinite ease-in-out;
+}
+body.pill-anim-pulse .view-header-pill.pill-red {
+  animation-name: pillPulseRed;
+}
+@keyframes pillPulseRed {
+  0% { transform: scale(1); opacity: 0.95; }
+  50% { transform: scale(1.04); opacity: 1; box-shadow: 0 0 14px rgba(239, 68, 68, 0.25); }
+  100% { transform: scale(1); opacity: 0.95; }
+}
+
+/* bounce (springy hover scale) */
+body.pill-anim-bounce .view-header-pill:hover {
+  transform: scale(1.08) translateY(-1px);
+  cursor: default;
+}
+
 
 
 

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { 
   Settings, X, RotateCcw, Monitor, Sun, Moon, Type, Layout, 
   PanelLeft, Palette, PaintBucket, Sliders, Check,
-  FolderOpen, Layers, ToggleLeft
+  FolderOpen, Layers, ToggleLeft, Smartphone, Zap
 } from 'lucide-react';
 import {
   useTheme,
@@ -19,6 +19,8 @@ import {
   type AccordionStyle,
   type UiDensity,
   type AnimationStyle,
+  type PillStyle,
+  type PillAnimation,
 } from '../contexts/ThemeContext';
 
 /* ── Mini preview SVGs para estilos de sidebar ─── */
@@ -487,6 +489,150 @@ export default function ThemeCustomizer() {
           {activeTab === 'detalles' && (
             <div className="customizer-tab-content animate-entrance">
 
+              {/* BORDES Y GROSOR DEL SISTEMA */}
+              <div className="customizer-section">
+                <div className="customizer-section-header">
+                  <Sliders size={15} />
+                  <span>Bordes y Contornos del Sistema</span>
+                </div>
+                
+                {/* Interruptor para habilitar/desactivar bordes */}
+                <button
+                  className={`customizer-select-item-btn ${settings.borderEnabled ? 'active' : ''}`}
+                  onClick={() => updateTheme({ borderEnabled: !settings.borderEnabled })}
+                  style={{ marginBottom: '12px' }}
+                >
+                  <div className="customizer-select-item-radio">
+                    {settings.borderEnabled && <div className="customizer-radio-checked" />}
+                  </div>
+                  <div className="customizer-select-item-text">
+                    <div className="title">Activar Bordes Globales</div>
+                    <div className="desc">Dibuja contornos visibles alrededor de tarjetas, botones, inputs y componentes</div>
+                  </div>
+                </button>
+
+                {/* Slider para grosor de bordes (solo visible/editable si están activados) */}
+                {settings.borderEnabled && (
+                  <div className="customizer-slider-group" style={{ marginTop: '12px', animation: 'fadeIn 0.2s ease' }}>
+                    <div className="customizer-slider-header">
+                      <span className="label">Grosor de Borde (Contornos)</span>
+                      <span className="value">{settings.borderWidth}px</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0.5"
+                      max="5.0"
+                      step="0.1"
+                      value={settings.borderWidth}
+                      onChange={(e) => updateTheme({ borderWidth: parseFloat(e.target.value) })}
+                      className="customizer-slider"
+                    />
+                    <div className="customizer-slider-labels">
+                      <span>Fino (0.5px)</span>
+                      <span>Estándar (1.5px)</span>
+                      <span>Grueso (5.0px)</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* SCROLLBARS Y POPUPS DE LA APLICACIÓN */}
+              <div className="customizer-section">
+                <div className="customizer-section-header">
+                  <Sliders size={15} />
+                  <span>Scrollbars y Desplegables</span>
+                </div>
+                
+                {/* 1. Toggle Scrollbar Premium */}
+                <button
+                  className={`customizer-select-item-btn ${settings.customScrollbar ? 'active' : ''}`}
+                  onClick={() => updateTheme({ customScrollbar: !settings.customScrollbar })}
+                  style={{ marginBottom: '12px' }}
+                >
+                  <div className="customizer-select-item-radio">
+                    {settings.customScrollbar && <div className="customizer-radio-checked" />}
+                  </div>
+                  <div className="customizer-select-item-text">
+                    <div className="title">Barras de Scroll Premium</div>
+                    <div className="desc">Activa barras de scroll minimalistas que cambian al color de marca en hover</div>
+                  </div>
+                </button>
+
+                {/* 2. Slider Grosor Scrollbar (solo si está activo) */}
+                {settings.customScrollbar && (
+                  <div className="customizer-slider-group" style={{ marginBottom: '20px', animation: 'fadeIn 0.2s ease' }}>
+                    <div className="customizer-slider-header">
+                      <span className="label">Ancho de Barra de Scroll</span>
+                      <span className="value">{settings.scrollbarSize}px</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="3"
+                      max="12"
+                      value={settings.scrollbarSize}
+                      onChange={(e) => updateTheme({ scrollbarSize: parseInt(e.target.value, 10) })}
+                      className="customizer-slider"
+                    />
+                    <div className="customizer-slider-labels">
+                      <span>Muy Fino (3px)</span>
+                      <span>Estándar (6px)</span>
+                      <span>Ancho (12px)</span>
+                    </div>
+                  </div>
+                )}
+
+                {/* 3. Estilo de Popups y Selects (popupStyle) */}
+                <div style={{ marginBottom: '12px' }}>
+                  <div className="customizer-slider-header" style={{ marginBottom: '8px' }}>
+                    <span className="label" style={{ fontWeight: 800 }}>Estilo de Desplegables y Popups</span>
+                  </div>
+                  <div className="customizer-select-list">
+                    {([
+                      { id: 'solid', title: 'Sólido Opaco', desc: 'Fondo plano var(--bg-card) sin transparencias' },
+                      { id: 'glassmorphism', title: 'Cristal Esmerilado (Glass)', desc: 'Fondo translúcido con desenfoque de cristal' },
+                      { id: 'bordered', title: 'Contorno de Marca', desc: 'Sin fondo y con contornos destacados' }
+                    ] as { id: 'solid' | 'glassmorphism' | 'bordered'; title: string; desc: string }[]).map(style => (
+                      <button
+                        key={style.id}
+                        className={`customizer-select-item-btn ${settings.popupStyle === style.id ? 'active' : ''}`}
+                        onClick={() => updateTheme({ popupStyle: style.id })}
+                      >
+                        <div className="customizer-select-item-radio">
+                          {settings.popupStyle === style.id && <div className="customizer-radio-checked" />}
+                        </div>
+                        <div className="customizer-select-item-text">
+                          <div className="title">{style.title}</div>
+                          <div className="desc">{style.desc}</div>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 4. Slider Desenfoque Popups (solo si es glassmorphism) */}
+                {settings.popupStyle === 'glassmorphism' && (
+                  <div className="customizer-slider-group" style={{ marginTop: '12px', animation: 'fadeIn 0.2s ease' }}>
+                    <div className="customizer-slider-header">
+                      <span className="label">Fuerza del Desenfoque (Popup Blur)</span>
+                      <span className="value">{settings.popupBlur}px</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max="24"
+                      value={settings.popupBlur}
+                      onChange={(e) => updateTheme({ popupBlur: parseInt(e.target.value, 10) })}
+                      className="customizer-slider"
+                    />
+                    <div className="customizer-slider-labels">
+                      <span>Lúcido (0px)</span>
+                      <span>Estándar (12px)</span>
+                      <span>Esmerilado (24px)</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {/* RANGE SLIDERS PARA REDONDEADO DINÁMICO DE COMPONENTES INDEPENDIENTES */}
               <div className="customizer-section">
                 <div className="customizer-section-header">
@@ -725,6 +871,92 @@ export default function ThemeCustomizer() {
                   </div>
                 </button>
               </div>
+
+              {/* MODALES EN MÓVIL */}
+              <div className="customizer-section">
+                <div className="customizer-section-header">
+                  <Smartphone size={15} />
+                  <span>Modales en Dispositivos Móviles</span>
+                </div>
+                <div className="customizer-select-list">
+                  {([
+                    { id: 'standard', title: 'Modal Estándar (Pantalla completa)', desc: 'Panel a pantalla completa que se desliza desde abajo' },
+                    { id: 'panel', title: 'Modal Deslizante (Estilo PC)', desc: 'Modal centrado idéntico a PC, que se desliza desde la derecha' }
+                  ] as { id: 'standard' | 'panel'; title: string; desc: string }[]).map(style => (
+                    <button
+                      key={style.id}
+                      className={`customizer-select-item-btn ${settings.mobileModalStyle === style.id ? 'active' : ''}`}
+                      onClick={() => updateTheme({ mobileModalStyle: style.id })}
+                    >
+                      <div className="customizer-select-item-radio">
+                        {settings.mobileModalStyle === style.id && <div className="customizer-radio-checked" />}
+                      </div>
+                      <div className="customizer-select-item-text">
+                        <div className="title">{style.title}</div>
+                        <div className="desc">{style.desc}</div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {/* PÍLDORAS INFORMATIVAS */}
+              <div className="customizer-section">
+                <div className="customizer-section-header">
+                  <Layout size={15} />
+                  <span>Estilo de Píldoras en Cabecera</span>
+                </div>
+                <div className="customizer-select-list">
+                  {([
+                    { id: 'flat', title: 'Translúcido (Sutil)', desc: 'Fondo atenuado con color de marca y texto a tono' },
+                    { id: 'filled', title: 'Sólido Relleno', desc: 'Fondo vibrante a color de marca con texto claro' },
+                    { id: 'bordered', title: 'Contorno Lineal', desc: 'Fondo transparente y borde con color de marca' },
+                    { id: 'glow', title: 'Brillo de Neón', desc: 'Resplandor difuminado y sombras con brillo neón' }
+                  ] as { id: PillStyle; title: string; desc: string }[]).map(style => (
+                    <button
+                      key={style.id}
+                      className={`customizer-select-item-btn ${settings.pillStyle === style.id ? 'active' : ''}`}
+                      onClick={() => updateTheme({ pillStyle: style.id })}
+                    >
+                      <div className="customizer-select-item-radio">
+                        {settings.pillStyle === style.id && <div className="customizer-radio-checked" />}
+                      </div>
+                      <div className="customizer-select-item-text">
+                        <div className="title">{style.title}</div>
+                        <div className="desc">{style.desc}</div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="customizer-section">
+                <div className="customizer-section-header">
+                  <Zap size={15} />
+                  <span>Animación de Píldoras</span>
+                </div>
+                <div className="customizer-select-list">
+                  {([
+                    { id: 'pulse', title: 'Latido de Pulso', desc: 'Animación cíclica suave y continua de latido' },
+                    { id: 'bounce', title: 'Rebote Activo', desc: 'Efecto resorte interactivo al pasar el mouse por encima' },
+                    { id: 'none', title: 'Estático', desc: 'Sin animaciones ni transiciones dinámicas continuas' }
+                  ] as { id: PillAnimation; title: string; desc: string }[]).map(anim => (
+                    <button
+                      key={anim.id}
+                      className={`customizer-select-item-btn ${settings.pillAnimation === anim.id ? 'active' : ''}`}
+                      onClick={() => updateTheme({ pillAnimation: anim.id })}
+                    >
+                      <div className="customizer-select-item-radio">
+                        {settings.pillAnimation === anim.id && <div className="customizer-radio-checked" />}
+                      </div>
+                      <div className="customizer-select-item-text">
+                        <div className="title">{anim.title}</div>
+                        <div className="desc">{anim.desc}</div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
 
               {/* TIPOGRAFÍA */}
               <div className="customizer-section">

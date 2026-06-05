@@ -14,6 +14,8 @@ export type ListStyle = 'elevated' | 'striped' | 'minimal';
 export type AccordionStyle = 'classic' | 'glowing' | 'boxed';
 export type UiDensity = 'compact' | 'standard' | 'spacious';
 export type AnimationStyle = 'fluid' | 'swift' | 'static';
+export type PillStyle = 'flat' | 'filled' | 'bordered' | 'glow';
+export type PillAnimation = 'pulse' | 'bounce' | 'none';
 
 export interface ThemeSettings {
   mode: ThemeMode;
@@ -43,6 +45,15 @@ export interface ThemeSettings {
   glassBlur: number;
   glassNoise: boolean;
   shortcutsWidget: boolean;
+  borderEnabled: boolean;
+  borderWidth: number;
+  customScrollbar: boolean;
+  scrollbarSize: number;
+  popupStyle: 'solid' | 'glassmorphism' | 'bordered';
+  popupBlur: number;
+  mobileModalStyle: 'standard' | 'panel';
+  pillStyle: PillStyle;
+  pillAnimation: PillAnimation;
 }
 
 interface ThemeContextValue {
@@ -116,6 +127,15 @@ const DEFAULT_SETTINGS: ThemeSettings = {
   glassBlur: 16,
   glassNoise: true,
   shortcutsWidget: false,
+  borderEnabled: true,
+  borderWidth: 1.5,
+  customScrollbar: true,
+  scrollbarSize: 6,
+  popupStyle: 'glassmorphism',
+  popupBlur: 12,
+  mobileModalStyle: 'standard',
+  pillStyle: 'flat',
+  pillAnimation: 'bounce',
 };
 
 const STORAGE_KEY = 'stockmaster_theme_settings';
@@ -283,6 +303,42 @@ function applyThemeToDOM(s: ThemeSettings) {
 
   // Glow effects toggle
   body.classList.toggle('glow-effects-enabled', s.glowEffects);
+
+  // Borders customization
+  body.classList.toggle('borders-enabled', s.borderEnabled ?? true);
+  body.classList.toggle('borders-disabled', !(s.borderEnabled ?? true));
+  body.style.setProperty('--app-border-width', `${s.borderWidth ?? 1.5}px`);
+
+  // Scrollbars customization
+  const docEl = document.documentElement;
+  docEl.classList.toggle('custom-scrollbar-enabled', s.customScrollbar ?? true);
+  body.classList.toggle('custom-scrollbar-enabled', s.customScrollbar ?? true);
+  docEl.style.setProperty('--app-scrollbar-size', `${s.scrollbarSize ?? 6}px`);
+  body.style.setProperty('--app-scrollbar-size', `${s.scrollbarSize ?? 6}px`);
+
+  // Popups style and blur
+  docEl.classList.remove('popup-solid', 'popup-glassmorphism', 'popup-bordered');
+  docEl.classList.add(`popup-${s.popupStyle || 'glassmorphism'}`);
+  body.classList.remove('popup-solid', 'popup-glassmorphism', 'popup-bordered');
+  body.classList.add(`popup-${s.popupStyle || 'glassmorphism'}`);
+  docEl.style.setProperty('--app-popup-blur', `${s.popupBlur ?? 12}px`);
+  body.style.setProperty('--app-popup-blur', `${s.popupBlur ?? 12}px`);
+
+  // Auto-generate glass popup background depending on mode
+  const bgGlass = s.mode === 'dark' ? 'rgba(20, 20, 23, 0.75)' : 'rgba(255, 255, 255, 0.75)';
+  docEl.style.setProperty('--app-popup-bg-glass', bgGlass);
+  body.style.setProperty('--app-popup-bg-glass', bgGlass);
+
+  body.classList.remove('mobile-modal-standard', 'mobile-modal-panel');
+  body.classList.add(`mobile-modal-${s.mobileModalStyle || 'standard'}`);
+
+  // Pill style
+  body.classList.remove('pill-style-flat', 'pill-style-filled', 'pill-style-bordered', 'pill-style-glow');
+  body.classList.add(`pill-style-${s.pillStyle || 'flat'}`);
+
+  // Pill animation
+  body.classList.remove('pill-anim-pulse', 'pill-anim-bounce', 'pill-anim-none');
+  body.classList.add(`pill-anim-${s.pillAnimation || 'bounce'}`);
 }
 
 /* ── Context ──────────────────────────────────────── */

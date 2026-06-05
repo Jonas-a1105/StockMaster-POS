@@ -1,28 +1,7 @@
 version: '3.8'
 
 services:
-  # 1. Base de Datos PostgreSQL Central
-  postgres:
-    image: postgres:15-alpine
-    container_name: stockmaster_postgres
-    restart: always
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-stockmaster_admin}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-stockmaster_secure_password_2026}
-      POSTGRES_DB: ${POSTGRES_DB:-stockmaster_db}
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-stockmaster_admin} -d ${POSTGRES_DB:-stockmaster_db}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - stockmaster_network
-
-  # 2. Servidor Backend NestJS (Fastify + Prisma ORM)
+  # 1. Servidor Backend NestJS (Fastify + Prisma ORM + SQLite)
   backend:
     build:
       context: ./server
@@ -31,17 +10,15 @@ services:
     restart: always
     environment:
       PORT: 3000
-      DATABASE_URL: postgres://${POSTGRES_USER:-stockmaster_admin}:${POSTGRES_PASSWORD:-stockmaster_secure_password_2026}@postgres:5432/${POSTGRES_DB:-stockmaster_db}
-      JWT_SECRET: ${JWT_SECRET:-super_secure_token_secret_jwt_2026_stockmasterpro}
+      DATABASE_URL: "file:./prisma/dev.db"
+      JWT_SECRET: ${JWT_SECRET:-cambiar_esta_clave_secreta_en_produccion}
+      NODE_ENV: production
     ports:
       - "3000:3000"
-    depends_on:
-      postgres:
-        condition: service_healthy
-    networks:
-      - stockmaster_network
+    volumes:
+      - sqlite_data:/app/prisma
 
-  # 3. PWA Cliente + Servidor Nginx (Alto Rendimiento y Seguridad)
+  # 2. PWA Cliente + Servidor Nginx (Alto Rendimiento y Seguridad)
   frontend:
     build:
       context: ./client
@@ -52,13 +29,6 @@ services:
       - "80:80"
     depends_on:
       - backend
-    networks:
-      - stockmaster_network
 
 volumes:
-  postgres_data:
-    driver: local
-
-networks:
-  stockmaster_network:
-    driver: bridge
+  sqlite_data:

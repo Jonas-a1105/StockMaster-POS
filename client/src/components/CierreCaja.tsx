@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
 import { 
-  Lock, Unlock, DollarSign, RefreshCw, FileText, Printer, ShieldAlert, Award, Calendar, Clock, AlertTriangle, ArrowRight, PlayCircle, Download
+  Lock, Unlock, DollarSign, RefreshCw, FileText, Printer, ShieldAlert, Award, Calendar, Clock, AlertTriangle, ArrowRight, PlayCircle, Download, Info, X
 } from 'lucide-react';
 import { getDatabase, type SaleDocType } from '../db/database';
+import { logAuditEvent } from '../utils/audit';
 import { useExchangeRate } from '../contexts/ExchangeRateContext';
 import { useBusinessSettings } from '../contexts/BusinessSettingsContext';
 import { useToast } from './ToastNotification';
@@ -47,6 +48,14 @@ export default function CierreCaja({ user }: CierreCajaProps) {
   const { settings, updateSettings } = useBusinessSettings();
   const { addToast } = useToast();
 
+  // Mobile detection for full-height modal layout
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth <= 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
   const [activeShift, setActiveShift] = useState<ActiveShift | null>(null);
   const [openingUSD, setOpeningUSD] = useState('50');
   const [openingVES, setOpeningVES] = useState('0');
@@ -65,6 +74,17 @@ export default function CierreCaja({ user }: CierreCajaProps) {
   // Past closures history
   const [arqueoHistory, setArqueoHistory] = useState<ArqueoReport[]>([]);
   const [selectedReport, setSelectedReport] = useState<ArqueoReport | null>(null);
+
+  const ITEMS_PER_PAGE = 5;
+  const [currentPage, setCurrentPage] = useState(1);
+
+  // Reset pagination when history changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [arqueoHistory.length]);
+
+  const totalPages = Math.ceil(arqueoHistory.length / ITEMS_PER_PAGE);
+  const paginatedHistory = arqueoHistory.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
 
   const isAdmin = user.role === 'ADMIN';
 
@@ -167,6 +187,11 @@ export default function CierreCaja({ user }: CierreCajaProps) {
 
     localStorage.setItem('stockmaster_active_shift', JSON.stringify(newShift));
     setActiveShift(newShift);
+
+    logAuditEvent(user, 'CAJA_APERTURA', {
+      initialUSD: oUSD,
+      initialVES: oVES
+    });
     updateSettings({ isPOSLocked: false }); // Unlock POS for selling
     
     // Clear inputs
@@ -233,6 +258,11 @@ export default function CierreCaja({ user }: CierreCajaProps) {
     localStorage.removeItem('stockmaster_active_shift');
     setActiveShift(null);
     setSelectedReport(report); // Display printable report modal
+
+    logAuditEvent(user, 'CAJA_CIERRE', {
+      totalSalesUSD: totalSalesUSD,
+      diffUSD: diffUSD
+    });
 
     addToast({
       type: 'warning',
@@ -302,18 +332,26 @@ export default function CierreCaja({ user }: CierreCajaProps) {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', width: '100%', paddingBottom: '30px' }} className="animate-entrance">
+    <div className="view-container-layout animate-entrance" style={{ display: 'flex', flexDirection: 'column', gap: '24px', width: '100%', paddingBottom: '30px' }}>
       
       {/* HEADER WIDGET */}
-      <div className="widget" style={{ padding: '20px', borderRadius: 'var(--card-radius)' }}>
+      <div className="widget view-header-widget has-grid-content" style={{ padding: '20px', borderRadius: 'var(--card-radius)' }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '16px' }}>
-          <div>
-            <h2 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text-primary)', margin: 0, fontFamily: 'var(--font-main)' }}>
-              🔒 Cierre de Caja / Arqueo de Turno
-            </h2>
-            <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>
-              Realiza la declaración física del cajero, evalúa diferencias de efectivo y genera reportes X/Z.
-            </p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            <div className="info-tooltip-wrapper">
+              <Info size={18} className="info-tooltip-icon" style={{ color: 'var(--text-secondary)', cursor: 'help', opacity: 0.8 }} />
+              <span className="tooltip-text">
+                Realiza la declaración física del cajero, evalúa diferencias de efectivo y genera reportes X/Z.
+              </span>
+            </div>
+            <span className={`view-header-pill ${activeShift ? 'pill-green' : 'pill-red'}`}>
+              {activeShift ? 'Caja Abierta' : 'Caja Cerrada'}
+            </span>
+            {activeShift && (
+              <span className="view-header-pill pill-teal">
+                {salesList.length} Ventas
+              </span>
+            )}
           </div>
           {settings.isPOSLocked && (
             <div style={{
@@ -618,7 +656,7 @@ export default function CierreCaja({ user }: CierreCajaProps) {
                   No se registran cierres de caja previos.
                 </div>
               ) : (
-                arqueoHistory.map((report) => (
+                paginatedHistory.map((report) => (
                   <div 
                     key={report.id} 
                     onClick={() => setSelectedReport(report)}
@@ -656,6 +694,38 @@ export default function CierreCaja({ user }: CierreCajaProps) {
                 ))
               )}
             </div>
+
+            {totalPages > 1 && (
+              <div style={{
+                display: 'flex',
+                justifyContent: 'center',
+                alignItems: 'center',
+                gap: '12px',
+                padding: '12px 0 4px 0',
+                borderTop: '1px solid var(--border-color)',
+                marginTop: '12px'
+              }}>
+                <button
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  disabled={currentPage === 1}
+                  className="btn-pill-dark"
+                  style={{ padding: '4px 10px', borderRadius: '6px', fontSize: '10.5px', fontWeight: 700, cursor: currentPage === 1 ? 'not-allowed' : 'pointer', opacity: currentPage === 1 ? 0.4 : 1 }}
+                >
+                  ← Ant.
+                </button>
+                <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-secondary)' }}>
+                  {currentPage} / {totalPages}
+                </span>
+                <button
+                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                  disabled={currentPage === totalPages}
+                  className="btn-pill-dark"
+                  style={{ padding: '4px 10px', borderRadius: '6px', fontSize: '10.5px', fontWeight: 700, cursor: currentPage === totalPages ? 'not-allowed' : 'pointer', opacity: currentPage === totalPages ? 0.4 : 1 }}
+                >
+                  Sig. →
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
@@ -663,41 +733,53 @@ export default function CierreCaja({ user }: CierreCajaProps) {
 
       {/* PRINT THERMAL MODAL PREVIEW FOR SELECTED CIERRE Z */}
       {selectedReport && (
-        <div style={{
+        <div className="modal-registration-backdrop" style={{
           position: 'fixed',
           top: 0, left: 0, right: 0, bottom: 0,
-          backgroundColor: 'rgba(0, 0, 0, 0.7)',
+          backgroundColor: 'rgba(0, 0, 0, 0.65)',
           backdropFilter: 'blur(8px)',
           display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
+          justifyContent: isMobile ? 'flex-start' : 'center',
+          alignItems: isMobile ? 'stretch' : 'center',
+          flexDirection: isMobile ? 'column' : 'row',
           zIndex: 1600,
-          padding: '20px'
+          padding: isMobile ? 0 : '20px'
         }} onClick={() => setSelectedReport(null)}>
           <div 
-            className="widget animate-entrance" 
+            className={`widget ${!isMobile ? 'animate-entrance' : ''} modal-registration-content`} 
             style={{
               width: '100%',
-              maxWidth: '430px',
+              maxWidth: isMobile ? '100%' : '440px',
               backgroundColor: 'var(--bg-card)',
-              borderRadius: 'var(--card-radius)',
-              border: '1.5px solid var(--border-color)',
-              boxShadow: '0 20px 50px rgba(0, 0, 0, 0.4)',
+              borderRadius: isMobile ? 0 : 'var(--card-radius)',
+              border: isMobile ? 'none' : '1.5px solid var(--border-color)',
+              boxShadow: isMobile ? 'none' : '0 20px 50px rgba(0, 0, 0, 0.4)',
               overflow: 'hidden',
               display: 'flex',
               flexDirection: 'column',
-              maxHeight: '90vh'
+              height: isMobile ? '100dvh' : 'auto',
+              maxHeight: isMobile ? '100dvh' : '90vh'
             }}
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header */}
-            <div style={{ padding: '16px 20px', borderBottom: '1.5px solid var(--border-color)', display: 'flex', gap: '8px', alignItems: 'center', color: 'var(--brand-gold)', backgroundColor: 'var(--bg-input)' }}>
-              <FileText size={20} />
-              <strong style={{ fontSize: '14.5px' }}>Comprobante Fiscal - Reporte Z</strong>
+            <div style={{ padding: '20px 24px', borderBottom: '1.5px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <FileText size={18} style={{ color: 'var(--brand-gold)' }} />
+                <h4 style={{ fontSize: '16px', fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>
+                  Comprobante Fiscal - Reporte Z
+                </h4>
+              </div>
+              <button 
+                onClick={() => setSelectedReport(null)}
+                style={{ border: 'none', backgroundColor: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer', padding: '4px' }}
+              >
+                <X size={18} />
+              </button>
             </div>
 
             {/* Receipt Content */}
-            <div style={{ padding: '24px', overflowY: 'auto' }}>
+            <div style={{ padding: '24px', paddingBottom: isMobile ? '90px' : '24px', overflowY: 'auto', flex: 1 }}>
               
               <div style={{
                 backgroundColor: 'white',
@@ -788,14 +870,21 @@ export default function CierreCaja({ user }: CierreCajaProps) {
             </div>
 
             {/* Actions */}
-            <div style={{ padding: '16px 20px', borderTop: '1.5px solid var(--border-color)', display: 'flex', gap: '10px', backgroundColor: 'var(--bg-input)' }}>
+            <div style={{
+              padding: '16px 20px',
+              borderTop: '1.5px solid var(--border-color)',
+              display: 'flex',
+              gap: '10px',
+              backgroundColor: 'var(--bg-input)',
+              ...(isMobile ? { position: 'fixed' as const, bottom: 0, left: 0, right: 0, zIndex: 10 } : {})
+            }}>
               <button
                 onClick={() => window.print()}
                 className="btn-pill-dark"
                 style={{ flex: 1, gap: '6px', justifyContent: 'center', borderRadius: 'var(--button-radius)', backgroundColor: 'var(--bg-card)' }}
               >
                 <Printer size={15} />
-                <span>Imprimir Ticket</span>
+                <span>Imprimir</span>
               </button>
               <button
                 onClick={() => handleExportCSV(selectedReport)}
@@ -803,14 +892,14 @@ export default function CierreCaja({ user }: CierreCajaProps) {
                 style={{ flex: 1, gap: '6px', justifyContent: 'center', borderRadius: 'var(--button-radius)', backgroundColor: 'rgba(14,165,164,0.1)', color: 'var(--brand-teal)' }}
               >
                 <Download size={15} />
-                <span>Exportar CSV</span>
+                <span>CSV</span>
               </button>
               <button
                 onClick={() => setSelectedReport(null)}
                 className="btn-yellow"
                 style={{ flex: 1, justifyContent: 'center', borderRadius: 'var(--button-radius)' }}
               >
-                <span>Cerrar Vista</span>
+                <span>Cerrar</span>
               </button>
             </div>
           </div>

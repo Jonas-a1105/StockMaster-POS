@@ -2,9 +2,10 @@ interface OverviewCardsProps {
   totalRevenue: number;
   salesCount: number;
   productsCount: number;
+  setActiveTab: (tab: 'dashboard' | 'pos' | 'inventario' | 'compras' | 'nomina' | 'clientes' | 'proveedores' | 'analiticas' | 'auditoria' | 'cierre' | 'settings') => void;
 }
 
-export default function OverviewCards({ totalRevenue, salesCount, productsCount }: OverviewCardsProps) {
+export default function OverviewCards({ totalRevenue, salesCount, productsCount, setActiveTab }: OverviewCardsProps) {
   // Format revenue beautifully
   const formattedRevenue = totalRevenue >= 1000 
     ? `$ ${(totalRevenue / 1000).toFixed(1)}k` 
@@ -19,7 +20,7 @@ export default function OverviewCards({ totalRevenue, salesCount, productsCount 
           <div className="card-value" style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
             {formattedRevenue}
           </div>
-          <div className="card-link" onClick={() => alert('¡Visualizando balance total de transacciones locales!')}>
+          <div className="card-link" onClick={() => setActiveTab('analiticas')}>
             Total ingresos reales
           </div>
         </div>
@@ -35,7 +36,7 @@ export default function OverviewCards({ totalRevenue, salesCount, productsCount 
         <div className="overview-card card-bg-orange has-left-notch has-right-notch">
           <div className="card-title">Transacciones POS</div>
           <div className="card-value">{salesCount}</div>
-          <div className="card-link" onClick={() => alert('¡Visualizando listado completo de facturas!')}>
+          <div className="card-link" onClick={() => setActiveTab('pos')}>
             Ver historial de caja
           </div>
         </div>
@@ -51,7 +52,7 @@ export default function OverviewCards({ totalRevenue, salesCount, productsCount 
         <div className="overview-card card-bg-purple has-left-notch">
           <div className="card-title">Catálogo Productos</div>
           <div className="card-value">{productsCount}</div>
-          <div className="card-link" onClick={() => alert('¡Abriendo el panel de inventario y OCR!')}>
+          <div className="card-link" onClick={() => setActiveTab('inventario')}>
             Ver catálogo completo
           </div>
         </div>

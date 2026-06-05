@@ -6,10 +6,14 @@ const prisma = new PrismaClient();
 async function main() {
   console.log('🌱 Iniciando seed de la base de datos...');
 
-  const adminPassword = await bcrypt.hash('admin123', 10);
-  const cashierPassword = await bcrypt.hash('cajero123', 10);
-  const adminPin = await bcrypt.hash('1234', 10);
-  const cashierPin = await bcrypt.hash('5678', 10);
+  const adminPw = process.env.SEED_ADMIN_PASSWORD || 'admin123';
+  const cashierPw = process.env.SEED_CASHIER_PASSWORD || 'cajero123';
+  const adminPinRaw = process.env.SEED_ADMIN_PIN || '1234';
+  const cashierPinRaw = process.env.SEED_CASHIER_PIN || '5678';
+  const adminPassword = await bcrypt.hash(adminPw, 10);
+  const cashierPassword = await bcrypt.hash(cashierPw, 10);
+  const adminPin = await bcrypt.hash(adminPinRaw, 10);
+  const cashierPin = await bcrypt.hash(cashierPinRaw, 10);
 
   const admin = await prisma.user.upsert({
     where: { email: 'admin@stockmaster.com' },

@@ -1,6 +1,10 @@
 import { useState, useEffect } from 'react';
-import { Search, UserPlus, Mail, Phone, MapPin, Trash2, Edit, Check, AlertTriangle, AlertCircle, X, Briefcase, RefreshCw, CreditCard, DollarSign } from 'lucide-react';
+import { Search, UserPlus, Mail, Phone, MapPin, Trash2, Edit, Check, AlertTriangle, AlertCircle, X, Briefcase, RefreshCw, CreditCard, DollarSign, Info } from 'lucide-react';
 import { useExchangeRate } from '../contexts/ExchangeRateContext';
+import { logAuditEvent } from '../utils/audit';
+import CustomSelect from './CustomSelect';
+import { getDatabase } from '../db/database';
+import { syncWorker } from '../db/sync';
 
 interface ProveedoresProps {
   user: {
@@ -25,9 +29,8 @@ export interface Supplier {
   status: 'Activo' | 'Inactivo';
 }
 
-const STORAGE_KEY = 'stockmaster_suppliers_local';
-
-export default function Proveedores({ searchTerm = '' }: ProveedoresProps) {
+export default function Proveedores({ searchTerm = '', user }: ProveedoresProps) {
+  const isAdmin = user.role === 'ADMIN';
   const { dolarRate } = useExchangeRate();
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [localSearchTerm, setLocalSearchTerm] = useState('');
@@ -40,6 +43,14 @@ export default function Proveedores({ searchTerm = '' }: ProveedoresProps) {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<Supplier | null>(null);
   const [showSuccessToast, setShowSuccessToast] = useState<string | null>(null);
   const [alertConfig, setAlertConfig] = useState<{ title: string; message: string; type: 'success' | 'error' | 'info' } | null>(null);
+
+  // Mobile detection for full-height modal layout
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth <= 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   // C4: Pagination state
   const [currentPage, setCurrentPage] = useState(1);
@@ -83,107 +94,56 @@ export default function Proveedores({ searchTerm = '' }: ProveedoresProps) {
     const saved = localStorage.getItem('stockmaster_supplier_credits_local');
     if (saved) {
       setCxPMap(JSON.parse(saved));
-    } else {
-      const initialMap: typeof cxpMap = {
-        'J-00032991-2': {
-          balanceUSD: 340.00,
-          invoices: [
-            { ticket: 'FC-HNZ-0892', date: '20/05/2026', total: 580.00, paid: 240.00, pending: 340.00, status: 'Pendiente', dueDate: '04/06/2026' }
-          ],
-          payments: [
-            { id: 'pago_s01', date: '25/05/2026', amount: 240.00, method: 'TRANSFERENCIA' }
-          ]
-        },
-        'J-30477401-2': {
-          balanceUSD: 750.00,
-          invoices: [
-            { ticket: 'FC-LAC-1104', date: '01/05/2026', total: 1200.00, paid: 450.00, pending: 750.00, status: 'Pendiente', dueDate: '31/05/2026' },
-            { ticket: 'FC-LAC-1089', date: '18/04/2026', total: 320.00, paid: 320.00, pending: 0.00, status: 'Pagado', dueDate: '18/05/2026' }
-          ],
-          payments: [
-            { id: 'pago_s02', date: '10/05/2026', amount: 450.00, method: 'TRANSFERENCIA' },
-            { id: 'pago_s03', date: '28/04/2026', amount: 320.00, method: 'EFECTIVO' }
-          ]
-        },
-        'J-00006572-4': {
-          balanceUSD: 0.00,
-          invoices: [
-            { ticket: 'FC-PLR-4421', date: '28/05/2026', total: 450.00, paid: 450.00, pending: 0.00, status: 'Pagado', dueDate: 'Contado' }
-          ],
-          payments: [
-            { id: 'pago_s04', date: '28/05/2026', amount: 450.00, method: 'EFECTIVO' }
-          ]
-        }
-      };
-      setCxPMap(initialMap);
-      localStorage.setItem('stockmaster_supplier_credits_local', JSON.stringify(initialMap));
     }
   };
 
-  const loadSuppliers = () => {
+  const loadSuppliers = async () => {
     setIsRefreshing(true);
     try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        setSuppliers(JSON.parse(saved));
-      } else {
-        // Seed default high-fidelity Venezuelan suppliers
-        seedMockSuppliers();
-      }
+      await syncWorker.sync();
     } catch (err) {
-      console.error('Error loading suppliers:', err);
+      console.error('Error refreshing suppliers:', err);
     } finally {
       setTimeout(() => setIsRefreshing(false), 400);
     }
   };
 
-  const seedMockSuppliers = () => {
-    const mock: Supplier[] = [
-      {
-        id: 'sup_01',
-        rif: 'J-00006572-4',
-        companyName: 'Cervecería Polar C.A.',
-        contactName: 'Lorenzo Mendoza',
-        email: 'ventas@polar.com',
-        phone: '0212-2023333',
-        address: 'Zona Industrial de Los Cortijos de Lourdes, Caracas, Miranda',
-        category: 'Bebidas',
-        paymentTerms: 'Contado',
-        status: 'Activo'
-      },
-      {
-        id: 'sup_02',
-        rif: 'J-00032991-2',
-        companyName: 'Alimentos Heinz de Venezuela C.A.',
-        contactName: 'Patricia Salas',
-        email: 'heinz.ventas@heinz.com.ve',
-        phone: '0241-8740122',
-        address: 'Zona Industrial de Valencia, Edo. Carabobo',
-        category: 'Alimentos',
-        paymentTerms: 'Crédito 15 Días',
-        status: 'Activo'
-      },
-      {
-        id: 'sup_03',
-        rif: 'J-30477401-2',
-        companyName: 'Lácteos Los Andes C.A.',
-        contactName: 'Humberto Silva',
-        email: 'losandes@lacteos.gob.ve',
-        phone: '0251-2864010',
-        address: 'Av. Las Industrias, Barquisimeto, Edo. Lara',
-        category: 'Lácteos',
-        paymentTerms: 'Crédito 30 Días',
-        status: 'Activo'
-      }
-    ];
-
-    setSuppliers(mock);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(mock));
-  };
-
   useEffect(() => {
-    loadSuppliers();
+    let sub: any = null;
+
+    const setupSubscription = async () => {
+      try {
+        const db = await getDatabase();
+        const query = db.suppliers.find();
+        sub = query.$.subscribe((docs) => {
+          const list = docs.map(doc => {
+            const data = doc.toJSON();
+            return {
+              id: data.id,
+              rif: data.rif,
+              companyName: data.companyName,
+              contactName: data.contactName,
+              email: data.email,
+              phone: data.phone,
+              address: data.address,
+              category: data.category,
+              paymentTerms: data.paymentTerms as any,
+              status: data.status as any,
+            };
+          });
+          setSuppliers(list);
+        });
+      } catch (err) {
+        console.error('Error setting up suppliers RxDB subscription:', err);
+      }
+    };
+
+    setupSubscription();
     loadCxPData();
+
+    return () => {
+      if (sub) sub.unsubscribe();
+    };
   }, []);
 
   const activeSearch = searchTerm || localSearchTerm;
@@ -209,6 +169,7 @@ export default function Proveedores({ searchTerm = '' }: ProveedoresProps) {
 
   const handleRegisterPago = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isAdmin) return;
     if (!selectedSupplier) return;
 
     const supplierRIF = selectedSupplier.rif;
@@ -251,7 +212,7 @@ export default function Proveedores({ searchTerm = '' }: ProveedoresProps) {
     });
 
     const newPayment = {
-      id: 'pago_sup_' + Date.now(),
+      id: 'pay_' + Date.now(),
       date: new Date().toLocaleDateString('es-VE'),
       amount: amountVal,
       method: pagoForm.method
@@ -271,40 +232,19 @@ export default function Proveedores({ searchTerm = '' }: ProveedoresProps) {
     setCxPMap(nextMap);
     localStorage.setItem('stockmaster_supplier_credits_local', JSON.stringify(nextMap));
 
-    // Guardar en bitácora local de auditoría
-    const newAuditLog = {
-      id: 'local_log_' + crypto.randomUUID(),
-      action: 'CXP_PAGO_PROVEEDOR',
-      details: JSON.stringify({
-        supplierId: selectedSupplier.id,
-        supplierName: selectedSupplier.companyName,
-        rif: supplierRIF,
-        pagoAmountUSD: amountVal,
-        paymentMethod: pagoForm.method,
-        remainingBalanceUSD: nextSupplierData.balanceUSD
-      }, null, 2),
-      ipAddress: '127.0.0.1 (Local)',
-      userAgent: navigator.userAgent + ' (PWA Local)',
-      createdAt: new Date().toISOString(),
-      user: {
-        name: 'Administrador Local',
-        email: 'admin@stockmaster.pro',
-        role: 'ADMIN'
-      }
-    };
-
-    const savedLocal = localStorage.getItem('stockmaster_local_audit_logs');
-    const localLogs = savedLocal ? JSON.parse(savedLocal) : [];
-    localLogs.unshift(newAuditLog);
-    localStorage.setItem('stockmaster_local_audit_logs', JSON.stringify(localLogs));
+    logAuditEvent(user, 'CXP_PAGO_PROVEEDOR', {
+      amount: amountVal,
+      supplierName: selectedSupplier.companyName
+    });
 
     setPagoForm({ amount: '', method: 'TRANSFERENCIA' });
     setShowSuccessToast(`Pago de $${amountVal.toFixed(2)} a ${selectedSupplier.companyName} registrado exitosamente.`);
     setTimeout(() => setShowSuccessToast(null), 3500);
   };
 
-  const handleAddSupplier = (e: React.FormEvent) => {
+  const handleAddSupplier = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isAdmin) return;
     if (!newSupplier.rif || !newSupplier.companyName) {
       setAlertConfig({
         title: 'Campos Obligatorios',
@@ -325,7 +265,7 @@ export default function Proveedores({ searchTerm = '' }: ProveedoresProps) {
       return;
     }
 
-    const supplierToAdd: Supplier = {
+    const supplierToAdd = {
       id: 'sup_' + Date.now(),
       rif: cleanedRif,
       companyName: newSupplier.companyName.trim(),
@@ -335,30 +275,42 @@ export default function Proveedores({ searchTerm = '' }: ProveedoresProps) {
       address: newSupplier.address.trim() || 'Venezuela',
       category: newSupplier.category,
       paymentTerms: newSupplier.paymentTerms,
-      status: 'Activo'
+      status: 'Activo',
+      updatedAt: new Date().toISOString()
     };
 
-    const nextList = [...suppliers, supplierToAdd];
-    setSuppliers(nextList);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(nextList));
+    try {
+      const db = await getDatabase();
+      await db.suppliers.insert(supplierToAdd);
 
-    setShowAddModal(false);
-    setNewSupplier({
-      rif: 'J-',
-      companyName: '',
-      contactName: '',
-      email: '',
-      phone: '',
-      address: '',
-      category: 'Alimentos',
-      paymentTerms: 'Contado',
-    });
+      logAuditEvent(user, 'PROVEEDOR_CREAR', {
+        companyName: supplierToAdd.companyName,
+        rif: supplierToAdd.rif
+      });
 
-    setShowSuccessToast('Proveedor registrado exitosamente en la base de datos local.');
-    setTimeout(() => setShowSuccessToast(null), 3500);
+      setShowAddModal(false);
+      setNewSupplier({
+        rif: 'J-',
+        companyName: '',
+        contactName: '',
+        email: '',
+        phone: '',
+        address: '',
+        category: 'Alimentos',
+        paymentTerms: 'Contado',
+      });
+
+      setShowSuccessToast('Proveedor registrado exitosamente en la base de datos local.');
+      setTimeout(() => setShowSuccessToast(null), 3500);
+
+      syncWorker.sync();
+    } catch (err) {
+      console.error('Error inserting supplier into RxDB:', err);
+    }
   };
 
   const handleEditSupplier = (supplier: Supplier) => {
+    if (!isAdmin) return;
     setEditingSupplier(supplier);
     setEditSupplierForm({
       rif: supplier.rif,
@@ -373,8 +325,9 @@ export default function Proveedores({ searchTerm = '' }: ProveedoresProps) {
     setShowEditModal(true);
   };
 
-  const handleSaveEditSupplier = (e: React.FormEvent) => {
+  const handleSaveEditSupplier = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isAdmin) return;
     if (!editSupplierForm.companyName) {
       setAlertConfig({
         title: 'Campos Obligatorios',
@@ -384,10 +337,11 @@ export default function Proveedores({ searchTerm = '' }: ProveedoresProps) {
       return;
     }
 
-    const updated = suppliers.map(s => {
-      if (s.id === editingSupplier?.id) {
-        return {
-          ...s,
+    try {
+      const db = await getDatabase();
+      const doc = await db.suppliers.findOne({ selector: { id: editingSupplier?.id } }).exec();
+      if (doc) {
+        await doc.patch({
           companyName: editSupplierForm.companyName.trim(),
           contactName: editSupplierForm.contactName.trim(),
           email: editSupplierForm.email.trim(),
@@ -395,46 +349,72 @@ export default function Proveedores({ searchTerm = '' }: ProveedoresProps) {
           address: editSupplierForm.address.trim(),
           category: editSupplierForm.category,
           paymentTerms: editSupplierForm.paymentTerms,
-        };
+          updatedAt: new Date().toISOString()
+        });
       }
-      return s;
-    });
 
-    setSuppliers(updated);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-    setShowEditModal(false);
-    setEditingSupplier(null);
-    setShowSuccessToast('Proveedor actualizado exitosamente.');
-    setTimeout(() => setShowSuccessToast(null), 3000);
+      logAuditEvent(user, 'PROVEEDOR_EDITAR', {
+        companyName: editSupplierForm.companyName.trim()
+      });
+
+      setShowEditModal(false);
+      setEditingSupplier(null);
+      setShowSuccessToast('Proveedor actualizado exitosamente.');
+      setTimeout(() => setShowSuccessToast(null), 3000);
+
+      syncWorker.sync();
+    } catch (err) {
+      console.error('Error editing supplier in RxDB:', err);
+    }
   };
 
-  const handleDeleteSupplier = () => {
+  const handleDeleteSupplier = async () => {
+    if (!isAdmin) return;
     if (!showDeleteConfirm) return;
 
-    const nextList = suppliers.filter(s => s.id !== showDeleteConfirm.id);
-    setSuppliers(nextList);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(nextList));
+    try {
+      const db = await getDatabase();
+      const doc = await db.suppliers.findOne({ selector: { id: showDeleteConfirm.id } }).exec();
+      if (doc) {
+        await doc.remove();
+      }
 
-    setShowDeleteConfirm(null);
-    setShowSuccessToast('Proveedor eliminado correctamente.');
-    setTimeout(() => setShowSuccessToast(null), 3000);
+      logAuditEvent(user, 'PROVEEDOR_ELIMINAR', {
+        id: showDeleteConfirm.id
+      });
+
+      setShowDeleteConfirm(null);
+      setShowSuccessToast('Proveedor eliminado correctamente.');
+      setTimeout(() => setShowSuccessToast(null), 3000);
+
+      syncWorker.sync();
+    } catch (err) {
+      console.error('Error deleting supplier from RxDB:', err);
+    }
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', width: '100%', paddingBottom: '30px' }}>
+    <div className="view-container-layout" style={{ display: 'flex', flexDirection: 'column', gap: '24px', width: '100%', paddingBottom: '30px' }}>
       
       {/* SECCIÓN 1: CABECERA Y CONTROLES */}
-      <div className="widget" style={{ padding: '20px', borderRadius: 'var(--card-radius)' }}>
+      <div className="widget view-header-widget" style={{ padding: '20px', borderRadius: 'var(--card-radius)' }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '16px' }}>
           
-          {/* Título */}
-          <div>
-            <h2 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text-primary)', margin: 0, fontFamily: 'var(--font-main)' }}>
-              🚚 Directorio de Proveedores Comerciales
-            </h2>
-            <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>
-              Catálogo de suministros mayoristas, plazos de crédito de inventarios y datos de cobros.
-            </p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            <div className="info-tooltip-wrapper">
+              <Info size={18} className="info-tooltip-icon" style={{ color: 'var(--text-secondary)', cursor: 'help', opacity: 0.8 }} />
+              <span className="tooltip-text">
+                Catálogo de suministros mayoristas, plazos de crédito de inventarios y datos de cobros.
+              </span>
+            </div>
+            <span className="view-header-pill pill-teal">
+              {suppliers.length} Proveedores
+            </span>
+            {Object.values(cxpMap).filter(s => s.balanceUSD > 0).length > 0 && (
+              <span className="view-header-pill pill-purple">
+                {Object.values(cxpMap).filter(s => s.balanceUSD > 0).length} Con Deuda
+              </span>
+            )}
           </div>
 
           {/* Controles */}
@@ -502,7 +482,7 @@ export default function Proveedores({ searchTerm = '' }: ProveedoresProps) {
       )}
 
       {/* SECCIÓN 2: TABLA DE PROVEEDORES */}
-      <div className="widget" style={{ padding: '24px', borderRadius: 'var(--card-radius)', display: 'flex', flexDirection: 'column' }}>
+      <div className="widget view-content-widget" style={{ padding: '24px', borderRadius: 'var(--card-radius)', display: 'flex', flexDirection: 'column' }}>
         <div className="details-table-wrapper" style={{ overflowX: 'auto' }}>
           <table className="details-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12.5px' }}>
             <thead>
@@ -515,13 +495,13 @@ export default function Proveedores({ searchTerm = '' }: ProveedoresProps) {
                 <th style={{ padding: '10px 8px', fontWeight: 800 }}>DIRECCIÓN INDUSTRIAL</th>
                 <th style={{ padding: '10px 8px', fontWeight: 800, textAlign: 'center' }}>CRÉDITO / PAGO</th>
                 <th style={{ padding: '10px 8px', fontWeight: 800, textAlign: 'center' }}>INSUMOS</th>
-                <th style={{ padding: '10px 8px', fontWeight: 800, textAlign: 'center' }}>ACCIONES</th>
+                {(isAdmin || user.role === 'AUDITOR') && <th style={{ padding: '10px 8px', fontWeight: 800, textAlign: 'center' }}>ACCIONES</th>}
               </tr>
             </thead>
             <tbody>
               {filteredSuppliers.length === 0 ? (
                 <tr>
-                  <td colSpan={9} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-secondary)', fontWeight: 600 }}>
+                  <td colSpan={(isAdmin || user.role === 'AUDITOR') ? 9 : 8} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-secondary)', fontWeight: 600 }}>
                     No se encontraron proveedores registrados en el sistema.
                   </td>
                 </tr>
@@ -573,46 +553,52 @@ export default function Proveedores({ searchTerm = '' }: ProveedoresProps) {
                           {sup.category}
                         </span>
                       </td>
-                      <td style={{ padding: '12px 8px', textAlign: 'center' }}>
-                        <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
-                          <button
-                            onClick={() => handleViewCxPClick(sup)}
-                            className="btn-pill-dark"
-                            style={{ 
-                              padding: '4px 8px', 
-                              borderRadius: '6px', 
-                              height: '24px', 
-                              backgroundColor: 'rgba(168, 85, 247, 0.1)', 
-                              color: '#a855f7',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '4px',
-                              fontSize: '10px',
-                              fontWeight: 800
-                            }}
-                            title="Ver Cuentas por Pagar"
-                          >
-                            <CreditCard size={11} />
-                            <span>CxP</span>
-                          </button>
-                          <button
-                            onClick={() => handleEditSupplier(sup)}
-                            className="btn-pill-dark"
-                            style={{ padding: '4px', borderRadius: '6px', minWidth: '24px', height: '24px', backgroundColor: 'var(--bg-input)' }}
-                            title="Editar Datos"
-                          >
-                            <Edit size={12} />
-                          </button>
-                          <button
-                            onClick={() => setShowDeleteConfirm(sup)}
-                            className="btn-pill-dark"
-                            style={{ padding: '4px', borderRadius: '6px', minWidth: '24px', height: '24px', backgroundColor: 'rgba(239,68,68,0.1)', color: '#ef4444' }}
-                            title="Eliminar Proveedor"
-                          >
-                            <Trash2 size={12} />
-                          </button>
-                        </div>
-                      </td>
+                      {(isAdmin || user.role === 'AUDITOR') && (
+                        <td style={{ padding: '12px 8px', textAlign: 'center' }}>
+                          <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
+                            <button
+                              onClick={() => handleViewCxPClick(sup)}
+                              className="btn-pill-dark"
+                              style={{ 
+                                padding: '4px 8px', 
+                                borderRadius: '6px', 
+                                height: '24px', 
+                                backgroundColor: 'rgba(168, 85, 247, 0.1)', 
+                                color: '#a855f7',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                                fontSize: '10px',
+                                fontWeight: 800
+                              }}
+                              title="Ver Cuentas por Pagar"
+                            >
+                              <CreditCard size={11} />
+                              <span>CxP</span>
+                            </button>
+                            {isAdmin && (
+                              <button
+                                onClick={() => handleEditSupplier(sup)}
+                                className="btn-pill-dark"
+                                style={{ padding: '4px', borderRadius: '6px', minWidth: '24px', height: '24px', backgroundColor: 'var(--bg-input)' }}
+                                title="Editar Datos"
+                              >
+                                <Edit size={12} />
+                              </button>
+                            )}
+                            {isAdmin && (
+                              <button
+                                onClick={() => setShowDeleteConfirm(sup)}
+                                className="btn-pill-dark"
+                                style={{ padding: '4px', borderRadius: '6px', minWidth: '24px', height: '24px', backgroundColor: 'rgba(239,68,68,0.1)', color: '#ef4444' }}
+                                title="Eliminar Proveedor"
+                              >
+                                <Trash2 size={12} />
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      )}
                     </tr>
                   );
                 })
@@ -657,29 +643,32 @@ export default function Proveedores({ searchTerm = '' }: ProveedoresProps) {
 
       {/* MODAL MODULAR 1: NUEVO PROVEEDOR */}
       {showAddModal && (
-        <div style={{
+        <div className="modal-registration-backdrop" style={{
           position: 'fixed',
           top: 0, left: 0, right: 0, bottom: 0,
           backgroundColor: 'rgba(0, 0, 0, 0.65)',
           backdropFilter: 'blur(8px)',
           display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
+          justifyContent: isMobile ? 'flex-start' : 'center',
+          alignItems: isMobile ? 'stretch' : 'center',
+          flexDirection: isMobile ? 'column' : 'row',
           zIndex: 1500,
-          padding: '20px'
+          padding: isMobile ? 0 : '20px'
         }}>
           
-          <div className="widget" style={{
+          <div className={`widget ${!isMobile ? 'animate-entrance' : ''} modal-registration-content`} style={{
             width: '100%',
-            maxWidth: '520px',
+            maxWidth: isMobile ? '100%' : '520px',
+            padding: 0,
             backgroundColor: 'var(--bg-card)',
-            borderRadius: 'var(--card-radius)',
-            border: '1.5px solid var(--border-color)',
-            boxShadow: '0 20px 50px rgba(0, 0, 0, 0.4)',
+            borderRadius: isMobile ? 0 : 'var(--card-radius)',
+            border: isMobile ? 'none' : '1.5px solid var(--border-color)',
+            boxShadow: isMobile ? 'none' : '0 20px 50px rgba(0, 0, 0, 0.4)',
             overflow: 'hidden',
             display: 'flex',
             flexDirection: 'column',
-            animation: 'entrance 0.2s cubic-bezier(0.16, 1, 0.3, 1)'
+            height: isMobile ? '100dvh' : 'auto',
+            maxHeight: isMobile ? '100dvh' : '90vh'
           }}>
             
             {/* Cabecera */}
@@ -699,8 +688,8 @@ export default function Proveedores({ searchTerm = '' }: ProveedoresProps) {
             </div>
 
             {/* Formulario */}
-            <form onSubmit={handleAddSupplier}>
-              <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '14px', fontSize: '13px' }}>
+            <form onSubmit={handleAddSupplier} style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', flex: 1, minHeight: 0 }}>
+              <div style={{ padding: '24px', paddingBottom: isMobile ? '90px' : '24px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '14px', fontSize: '13px', flex: 1 }}>
                 
                 <div style={{ display: 'grid', gridTemplateColumns: '130px 1fr', gap: '10px' }}>
                   <div>
@@ -780,16 +769,16 @@ export default function Proveedores({ searchTerm = '' }: ProveedoresProps) {
                     <label style={{ fontWeight: 800, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', textTransform: 'uppercase', fontSize: '10px' }}>
                       Plazos de Crédito
                     </label>
-                    <select 
+                    <CustomSelect 
                       value={newSupplier.paymentTerms}
-                      onChange={(e) => setNewSupplier({ ...newSupplier, paymentTerms: e.target.value as any })}
-                      className="dropdown-select"
-                      style={{ width: '100%', padding: '10px', height: '40px', borderRadius: '12px' }}
-                    >
-                      <option value="Contado">Pago de Contado</option>
-                      <option value="Crédito 15 Días">Crédito 15 Días</option>
-                      <option value="Crédito 30 Días">Crédito 30 Días</option>
-                    </select>
+                      onChange={(val) => setNewSupplier({ ...newSupplier, paymentTerms: val as any })}
+                      options={[
+                        { value: 'Contado', label: 'Pago de Contado' },
+                        { value: 'Crédito 15 Días', label: 'Crédito 15 Días' },
+                        { value: 'Crédito 30 Días', label: 'Crédito 30 Días' }
+                      ]}
+                      style={{ width: '100%' }}
+                    />
                   </div>
                 </div>
 
@@ -797,18 +786,18 @@ export default function Proveedores({ searchTerm = '' }: ProveedoresProps) {
                   <label style={{ fontWeight: 800, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', textTransform: 'uppercase', fontSize: '10px' }}>
                     Categoría de Insumos
                   </label>
-                  <select 
+                  <CustomSelect 
                     value={newSupplier.category}
-                    onChange={(e) => setNewSupplier({ ...newSupplier, category: e.target.value })}
-                    className="dropdown-select"
-                    style={{ width: '100%', padding: '10px', height: '40px', borderRadius: '12px' }}
-                  >
-                    <option value="Alimentos">Alimentos y Víveres</option>
-                    <option value="Bebidas">Bebidas y Licores</option>
-                    <option value="Lácteos">Lácteos y Charcutería</option>
-                    <option value="Confitería">Confitería y Dulces</option>
-                    <option value="Limpieza">Artículos de Limpieza</option>
-                  </select>
+                    onChange={(val) => setNewSupplier({ ...newSupplier, category: val })}
+                    options={[
+                      { value: 'Alimentos', label: 'Alimentos y Víveres' },
+                      { value: 'Bebidas', label: 'Bebidas y Licores' },
+                      { value: 'Lácteos', label: 'Lácteos y Charcutería' },
+                      { value: 'Confitería', label: 'Confitería y Dulces' },
+                      { value: 'Limpieza', label: 'Artículos de Limpieza' }
+                    ]}
+                    style={{ width: '100%' }}
+                  />
                 </div>
 
                 <div>
@@ -828,7 +817,15 @@ export default function Proveedores({ searchTerm = '' }: ProveedoresProps) {
               </div>
 
               {/* Botones */}
-              <div style={{ padding: '16px 24px', borderTop: '1.5px solid var(--border-color)', display: 'flex', justifyContent: 'flex-end', gap: '10px', backgroundColor: 'var(--bg-input)' }}>
+              <div style={{
+                padding: '16px 24px',
+                borderTop: '1.5px solid var(--border-color)',
+                display: 'flex',
+                justifyContent: 'flex-end',
+                gap: '10px',
+                backgroundColor: 'var(--bg-input)',
+                ...(isMobile ? { position: 'fixed' as const, bottom: 0, left: 0, right: 0, zIndex: 10 } : {})
+              }}>
                 <button
                   type="button"
                   onClick={() => setShowAddModal(false)}
@@ -854,29 +851,32 @@ export default function Proveedores({ searchTerm = '' }: ProveedoresProps) {
 
       {/* MODAL MODULAR 1B: EDITAR PROVEEDOR */}
       {showEditModal && (
-        <div style={{
+        <div className="modal-registration-backdrop" style={{
           position: 'fixed',
           top: 0, left: 0, right: 0, bottom: 0,
           backgroundColor: 'rgba(0, 0, 0, 0.65)',
           backdropFilter: 'blur(8px)',
           display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
+          justifyContent: isMobile ? 'flex-start' : 'center',
+          alignItems: isMobile ? 'stretch' : 'center',
+          flexDirection: isMobile ? 'column' : 'row',
           zIndex: 1500,
-          padding: '20px'
+          padding: isMobile ? 0 : '20px'
         }}>
           
-          <div className="widget" style={{
+          <div className={`widget ${!isMobile ? 'animate-entrance' : ''} modal-registration-content`} style={{
             width: '100%',
-            maxWidth: '520px',
+            maxWidth: isMobile ? '100%' : '520px',
+            padding: 0,
             backgroundColor: 'var(--bg-card)',
-            borderRadius: 'var(--card-radius)',
-            border: '1.5px solid var(--border-color)',
-            boxShadow: '0 20px 50px rgba(0, 0, 0, 0.4)',
+            borderRadius: isMobile ? 0 : 'var(--card-radius)',
+            border: isMobile ? 'none' : '1.5px solid var(--border-color)',
+            boxShadow: isMobile ? 'none' : '0 20px 50px rgba(0, 0, 0, 0.4)',
             overflow: 'hidden',
             display: 'flex',
             flexDirection: 'column',
-            animation: 'entrance 0.2s cubic-bezier(0.16, 1, 0.3, 1)'
+            height: isMobile ? '100dvh' : 'auto',
+            maxHeight: isMobile ? '100dvh' : '90vh'
           }}>
             
             {/* Cabecera */}
@@ -896,8 +896,8 @@ export default function Proveedores({ searchTerm = '' }: ProveedoresProps) {
             </div>
 
             {/* Formulario */}
-            <form onSubmit={handleSaveEditSupplier}>
-              <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '14px', fontSize: '13px' }}>
+            <form onSubmit={handleSaveEditSupplier} style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', flex: 1, minHeight: 0 }}>
+              <div style={{ padding: '24px', paddingBottom: isMobile ? '90px' : '24px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '14px', fontSize: '13px', flex: 1 }}>
                 
                 <div style={{ display: 'grid', gridTemplateColumns: '130px 1fr', gap: '10px' }}>
                   <div>
@@ -975,17 +975,17 @@ export default function Proveedores({ searchTerm = '' }: ProveedoresProps) {
                     <label style={{ fontWeight: 800, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', textTransform: 'uppercase', fontSize: '10px' }}>
                       Condiciones de Pago
                     </label>
-                    <select 
+                    <CustomSelect 
                       value={editSupplierForm.paymentTerms}
-                      onChange={(e) => setEditSupplierForm({ ...editSupplierForm, paymentTerms: e.target.value as any })}
-                      className="dropdown-select"
-                      style={{ width: '100%', padding: '10px', height: '40px', borderRadius: '12px', backgroundColor: 'rgba(255, 255, 255, 0.05)', cursor: 'not-allowed' }}
-                      disabled
-                    >
-                      <option value="Contado">Pago de Contado</option>
-                      <option value="Crédito 15 Días">Crédito 15 Días</option>
-                      <option value="Crédito 30 Días">Crédito 30 Días</option>
-                    </select>
+                      onChange={(val) => setEditSupplierForm({ ...editSupplierForm, paymentTerms: val as any })}
+                      options={[
+                        { value: 'Contado', label: 'Pago de Contado' },
+                        { value: 'Crédito 15 Días', label: 'Crédito 15 Días' },
+                        { value: 'Crédito 30 Días', label: 'Crédito 30 Días' }
+                      ]}
+                      style={{ width: '100%' }}
+                      disabled={true}
+                    />
                   </div>
                 </div>
 
@@ -993,18 +993,18 @@ export default function Proveedores({ searchTerm = '' }: ProveedoresProps) {
                   <label style={{ fontWeight: 800, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', textTransform: 'uppercase', fontSize: '10px' }}>
                     Categoría de Insumos
                   </label>
-                  <select 
+                  <CustomSelect 
                     value={editSupplierForm.category}
-                    onChange={(e) => setEditSupplierForm({ ...editSupplierForm, category: e.target.value })}
-                    className="dropdown-select"
-                    style={{ width: '100%', padding: '10px', height: '40px', borderRadius: '12px' }}
-                  >
-                    <option value="Alimentos">Alimentos y Víveres</option>
-                    <option value="Bebidas">Bebidas y Licores</option>
-                    <option value="Lácteos">Lácteos y Charcutería</option>
-                    <option value="Confitería">Confitería y Dulces</option>
-                    <option value="Limpieza">Artículos de Limpieza</option>
-                  </select>
+                    onChange={(val) => setEditSupplierForm({ ...editSupplierForm, category: val })}
+                    options={[
+                      { value: 'Alimentos', label: 'Alimentos y Víveres' },
+                      { value: 'Bebidas', label: 'Bebidas y Licores' },
+                      { value: 'Lácteos', label: 'Lácteos y Charcutería' },
+                      { value: 'Confitería', label: 'Confitería y Dulces' },
+                      { value: 'Limpieza', label: 'Artículos de Limpieza' }
+                    ]}
+                    style={{ width: '100%' }}
+                  />
                 </div>
 
                 <div>
@@ -1024,7 +1024,15 @@ export default function Proveedores({ searchTerm = '' }: ProveedoresProps) {
               </div>
 
               {/* Botones */}
-              <div style={{ padding: '16px 24px', borderTop: '1.5px solid var(--border-color)', display: 'flex', justifyContent: 'flex-end', gap: '10px', backgroundColor: 'var(--bg-input)' }}>
+              <div style={{
+                padding: '16px 24px',
+                borderTop: '1.5px solid var(--border-color)',
+                display: 'flex',
+                justifyContent: 'flex-end',
+                gap: '10px',
+                backgroundColor: 'var(--bg-input)',
+                ...(isMobile ? { position: 'fixed' as const, bottom: 0, left: 0, right: 0, zIndex: 10 } : {})
+              }}>
                 <button
                   type="button"
                   onClick={() => { setShowEditModal(false); setEditingSupplier(null); }}
@@ -1345,7 +1353,7 @@ export default function Proveedores({ searchTerm = '' }: ProveedoresProps) {
                   </div>
 
                   {/* Formulario Registrar Pago */}
-                  {(cxpMap[selectedSupplier.rif]?.balanceUSD || 0) > 0 && (
+                  {isAdmin && (cxpMap[selectedSupplier.rif]?.balanceUSD || 0) > 0 && (
                     <form onSubmit={handleRegisterPago} style={{
                       backgroundColor: 'rgba(168, 85, 247, 0.04)',
                       border: '1.5px solid rgba(168, 85, 247, 0.15)',
@@ -1380,17 +1388,17 @@ export default function Proveedores({ searchTerm = '' }: ProveedoresProps) {
                           <label style={{ fontWeight: 800, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', textTransform: 'uppercase', fontSize: '9px' }}>
                             Método de Pago *
                           </label>
-                          <select
+                          <CustomSelect
                             value={pagoForm.method}
-                            onChange={(e) => setPagoForm({ ...pagoForm, method: e.target.value })}
-                            className="dropdown-select"
-                            style={{ width: '100%', padding: '8px', height: '36px', borderRadius: '10px' }}
-                          >
-                            <option value="TRANSFERENCIA">Transferencia Bancaria</option>
-                            <option value="EFECTIVO">Efectivo USD</option>
-                            <option value="PAGO_MOVIL">Pago Móvil VES</option>
-                            <option value="CHEQUE">Cheque Bancario</option>
-                          </select>
+                            onChange={(val) => setPagoForm({ ...pagoForm, method: val })}
+                            options={[
+                              { value: 'TRANSFERENCIA', label: 'Transferencia Bancaria' },
+                              { value: 'EFECTIVO', label: 'Efectivo USD' },
+                              { value: 'PAGO_MOVIL', label: 'Pago Móvil VES' },
+                              { value: 'CHEQUE', label: 'Cheque Bancario' }
+                            ]}
+                            style={{ width: '100%' }}
+                          />
                         </div>
                         <button
                           type="submit"

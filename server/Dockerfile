@@ -38,4 +38,4 @@ ENV NODE_ENV=production
 EXPOSE 3000
 
 # Ejecuta migraciones antes de iniciar el servidor en producción
-CMD ["sh", "-c", "npx prisma db push && node dist/main"]
+CMD ["sh", "-c", "npx prisma db push && node dist/src/main"]

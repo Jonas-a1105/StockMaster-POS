@@ -45,11 +45,21 @@ function formatLines(lines: TicketLine[]): string {
     .join('\n');
 }
 
+function escapeHtml(str: string): string {
+  if (!str) return '';
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 function generateTicketHTML(ticket: TicketData): string {
   const itemsHtml = ticket.items
     .map(
       (item) =>
-        `<tr><td style="font-size:12px">${item.name}</td><td style="font-size:10px;text-align:center">${item.qty}</td><td style="font-size:10px;text-align:right">$${item.price.toFixed(2)}</td><td style="font-size:12px;text-align:right;font-weight:700">$${item.total.toFixed(2)}</td></tr>`
+        `<tr><td style="font-size:12px">${escapeHtml(item.name)}</td><td style="font-size:10px;text-align:center">${item.qty}</td><td style="font-size:10px;text-align:right">$${item.price.toFixed(2)}</td><td style="font-size:12px;text-align:right;font-weight:700">$${item.total.toFixed(2)}</td></tr>`
     )
     .join('');
 
@@ -65,10 +75,10 @@ function generateTicketHTML(ticket: TicketData): string {
   .total-row td { font-weight: bold; font-size: 14px; padding-top: 6px; }
   .footer { text-align: center; font-size: 10px; margin-top: 10px; color: #666; }
 </style></head><body>
-  <h1>${ticket.businessName}</h1>
-  ${ticket.businessRIF ? `<p class="center" style="font-size:10px">RIF: ${ticket.businessRIF}</p>` : ''}
-  <p class="center" style="font-size:11px">Ticket N°: ${ticket.ticketNumber}<br>${ticket.date}</p>
-  <p style="font-size:10px">Cajero: ${ticket.cashier}${ticket.client ? ` | Cliente: ${ticket.client}` : ''}</p>
+  <h1>${escapeHtml(ticket.businessName)}</h1>
+  ${ticket.businessRIF ? `<p class="center" style="font-size:10px">RIF: ${escapeHtml(ticket.businessRIF)}</p>` : ''}
+  <p class="center" style="font-size:11px">Ticket N°: ${escapeHtml(ticket.ticketNumber)}<br>${escapeHtml(ticket.date)}</p>
+  <p style="font-size:10px">Cajero: ${escapeHtml(ticket.cashier)}${ticket.client ? ` | Cliente: ${escapeHtml(ticket.client)}` : ''}</p>
   <div class="sep"></div>
   <table><thead><tr><th>Producto</th><th style="text-align:center">Cant</th><th style="text-align:right">Precio</th><th style="text-align:right">Total</th></tr></thead><tbody>
   ${itemsHtml}
@@ -81,9 +91,9 @@ function generateTicketHTML(ticket: TicketData): string {
     <tr class="total-row"><td>TOTAL</td><td style="text-align:right">$${ticket.total.toFixed(2)}</td></tr>
   </table>
   ${ticket.dolarRate ? `<p class="center" style="font-size:10px">Tasa BCV: Bs. ${ticket.dolarRate}</p>` : ''}
-  <p class="center" style="font-size:10px">Método de Pago: ${ticket.paymentMethod}</p>
+  <p class="center" style="font-size:10px">Método de Pago: ${escapeHtml(ticket.paymentMethod)}</p>
   <div class="sep"></div>
-  ${ticket.footer ? `<p class="footer">${ticket.footer}</p>` : `<p class="footer">¡Gracias por su compra!</p>`}
+  ${ticket.footer ? `<p class="footer">${escapeHtml(ticket.footer)}</p>` : `<p class="footer">¡Gracias por su compra!</p>`}
 </body></html>`;
 }
 
@@ -144,7 +154,6 @@ export async function printViaWebUSB(ticket: TicketData): Promise<void> {
     await device.transferOut(1, encoder.encode(text));
     await device.close();
   } catch (err: any) {
-    console.error('WebUSB print failed:', err.message);
-    throw err;
+    console.warn('WebUSB print no disponible, use printTicket() como fallback:', err.message);
   }
 }

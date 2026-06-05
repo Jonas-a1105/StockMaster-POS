@@ -1,4 +1,4 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Query, UseGuards, BadRequestException } from '@nestjs/common';
 import { ReportsService } from './reports.service';
 import { AuthGuard } from '../auth/auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
@@ -22,11 +22,42 @@ export class ReportsController {
     return this.reportsService.getSalesByCategory();
   }
 
+  @Get('star-products')
+  async getStarProducts(@Query('limit') limitStr?: string) {
+    let limit = 10;
+    if (limitStr) {
+      const parsed = Number(limitStr);
+      if (isNaN(parsed) || !Number.isInteger(parsed) || parsed <= 0) {
+        throw new BadRequestException('El parámetro limit debe ser un número entero positivo.');
+      }
+      if (parsed > 50) {
+        throw new BadRequestException('El parámetro limit no puede exceder 50.');
+      }
+      limit = parsed;
+    }
+    return this.reportsService.getStarProducts(limit);
+  }
+
+  @Get('weekly-performance')
+  async getWeeklyPerformance() {
+    return this.reportsService.getWeeklyPerformance();
+  }
+
   @Get('audit-logs')
   async getAuditLogs(
     @Query('limit') limitStr?: string
   ) {
-    const limit = limitStr ? Number(limitStr) : 12;
+    let limit = 12;
+    if (limitStr) {
+      const parsed = Number(limitStr);
+      if (isNaN(parsed) || !Number.isInteger(parsed) || parsed <= 0) {
+        throw new BadRequestException('El parámetro limit debe ser un número entero positivo.');
+      }
+      if (parsed > 100) {
+        throw new BadRequestException('El parámetro limit no puede exceder 100.');
+      }
+      limit = parsed;
+    }
     return this.reportsService.getRecentAuditLogs(limit);
   }
 }

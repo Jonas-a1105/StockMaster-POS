@@ -4,6 +4,7 @@ import { Chart as ChartJS, ArcElement, Tooltip, Legend } from 'chart.js';
 import { Doughnut } from 'react-chartjs-2';
 import { getDatabase } from '../db/database';
 import { useTheme } from '../contexts/ThemeContext';
+import CustomSelect from './CustomSelect';
 
 ChartJS.register(ArcElement, Tooltip, Legend);
 
@@ -40,6 +41,9 @@ export default function RightSidebar({ isDarkMode }: RightSidebarProps) {
   const { settings } = useTheme();
   const chartRef = useRef<any>(null);
 
+  const [allSales, setAllSales] = useState<any[]>([]);
+  const [selectedPeriod, setSelectedPeriod] = useState<'semana' | 'mes' | 'año'>('semana');
+
   const [paymentStats, setPaymentStats] = useState({
     efectivo: 0,
     tarjeta: 0,
@@ -58,6 +62,8 @@ export default function RightSidebar({ isDarkMode }: RightSidebarProps) {
     pending: 0
   });
 
+  const months = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
+
   useEffect(() => {
     let salesSub: any;
     let productsSub: any;
@@ -66,33 +72,9 @@ export default function RightSidebar({ isDarkMode }: RightSidebarProps) {
       try {
         const db = await getDatabase();
 
-        // 1. Suscribirse a las ventas para calcular ingresos, métodos de pago y estado de sync
+        // 1. Suscribirse a las ventas reales de RxDB en tiempo real
         salesSub = db.sales.find().$.subscribe((salesDocs) => {
-          const sales = salesDocs.map(doc => doc.toJSON());
-
-          // Agrupar totales por método de pago
-          const pay = { efectivo: 0, tarjeta: 0, transferencia: 0 };
-          sales.forEach(sale => {
-            const method = sale.paymentMethod?.toUpperCase();
-            if (method === 'EFECTIVO') pay.efectivo += sale.total;
-            else if (method === 'TARJETA') pay.tarjeta += sale.total;
-            else if (method === 'TRANSFERENCIA') pay.transferencia += sale.total;
-            else pay.efectivo += sale.total; // Fallback
-          });
-          setPaymentStats(pay);
-
-          // Contar ventas sincronizadas vs en cola offline
-          const synced = sales.filter(s => !s.pendingSync).length;
-          const pending = sales.filter(s => s.pendingSync).length;
-          setSyncMonitor({ synced, pending });
-
-          // Calcular total ingresos
-          const totalRev = sales.reduce((acc, s) => acc + s.total, 0);
-          setStats(prev => ({
-            ...prev,
-            totalRevenue: totalRev,
-            localSalesCount: sales.length
-          }));
+          setAllSales(salesDocs.map(doc => doc.toJSON()));
         });
 
         // 2. Suscribirse a los productos para contar catálogo y alertas de bajo stock
@@ -117,6 +99,61 @@ export default function RightSidebar({ isDarkMode }: RightSidebarProps) {
       productsSub?.unsubscribe();
     };
   }, []);
+
+  // Recalcular estadísticas y gráficos reactivamente según el período seleccionado
+  useEffect(() => {
+    const today = new Date();
+
+    const filteredSales = allSales.filter(sale => {
+      const saleDate = new Date(sale.createdAt);
+      if (selectedPeriod === 'semana') {
+        // Semana actual (Lunes a Domingo)
+        const currentDay = today.getDay();
+        const distanceToMonday = currentDay === 0 ? -6 : 1 - currentDay;
+        const startOfWeek = new Date(today);
+        startOfWeek.setDate(today.getDate() + distanceToMonday);
+        startOfWeek.setHours(0, 0, 0, 0);
+
+        const endOfWeek = new Date(startOfWeek);
+        endOfWeek.setDate(startOfWeek.getDate() + 6);
+        endOfWeek.setHours(23, 59, 59, 999);
+
+        return saleDate >= startOfWeek && saleDate <= endOfWeek;
+      } else if (selectedPeriod === 'mes') {
+        // Mes actual
+        return saleDate.getFullYear() === today.getFullYear() && saleDate.getMonth() === today.getMonth();
+      } else if (selectedPeriod === 'año') {
+        // Año actual
+        return saleDate.getFullYear() === today.getFullYear();
+      }
+      return true;
+    });
+
+    // Agrupar totales por método de pago
+    const pay = { efectivo: 0, tarjeta: 0, transferencia: 0 };
+    filteredSales.forEach(sale => {
+      const method = sale.paymentMethod?.toUpperCase();
+      if (method === 'EFECTIVO') pay.efectivo += sale.total;
+      else if (method === 'TARJETA') pay.tarjeta += sale.total;
+      else if (method === 'TRANSFERENCIA') pay.transferencia += sale.total;
+      else pay.efectivo += sale.total;
+    });
+    setPaymentStats(pay);
+
+    // Contar ventas sincronizadas vs en cola offline
+    const synced = filteredSales.filter(s => !s.pendingSync).length;
+    const pending = filteredSales.filter(s => s.pendingSync).length;
+    setSyncMonitor({ synced, pending });
+
+    // Calcular total ingresos y ventas locales en el rango
+    const totalRev = filteredSales.reduce((acc, s) => acc + s.total, 0);
+    setStats(prev => ({
+      ...prev,
+      totalRevenue: totalRev,
+      localSalesCount: filteredSales.length
+    }));
+
+  }, [allSales, selectedPeriod]);
 
   const totalPayments = paymentStats.efectivo + paymentStats.tarjeta + paymentStats.transferencia;
   const isEmpty = totalPayments === 0;
@@ -185,11 +222,13 @@ export default function RightSidebar({ isDarkMode }: RightSidebarProps) {
   // Rango de fechas dinámico (semana en curso)
   const getWeekRangeString = () => {
     const today = new Date();
-    const first = today.getDate() - today.getDay() + 1; // Lunes
+    const first = today.getDate() - today.getDay() + (today.getDay() === 0 ? -6 : 1); // Lunes
     const last = first + 5; // Sábado
 
-    const firstDate = new Date(today.setDate(first));
-    const lastDate = new Date(today.setDate(last));
+    const firstDate = new Date(today);
+    firstDate.setDate(first);
+    const lastDate = new Date(today);
+    lastDate.setDate(last);
 
     const optionsMonth: any = { month: 'short' };
     const startStr = firstDate.getDate();
@@ -254,13 +293,18 @@ export default function RightSidebar({ isDarkMode }: RightSidebarProps) {
 
         {/* SECCIÓN 2: KPIs del Período Real-time */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-          <div className="dropdown-select" style={{ width: '100%', justifyContent: 'space-between', padding: '10px 16px', borderRadius: '14px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <span style={{ color: '#5e6068' }}>📅</span>
-              <span>Semana: {getWeekRangeString()}</span>
-            </div>
-            <ChevronDown size={14} />
-          </div>
+          
+          <CustomSelect
+            value={selectedPeriod}
+            onChange={(val) => setSelectedPeriod(val as 'semana' | 'mes' | 'año')}
+            options={[
+              { value: 'semana', label: `Semana: ${getWeekRangeString()}` },
+              { value: 'mes', label: `Mes: ${months[new Date().getMonth()]}` },
+              { value: 'año', label: `Año: ${new Date().getFullYear()}` }
+            ]}
+            icon={<span>📅</span>}
+            style={{ width: '100%' }}
+          />
           
           <div className="stats-list">
             <div className="stat-row">

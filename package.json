@@ -1,0 +1,14 @@
+{
+  "name": "stockmaster-pos",
+  "version": "1.0.0",
+  "description": "Orchestrator for StockMaster POS client and server",
+  "scripts": {
+    "install:all": "npm install --prefix server && npm install --prefix client",
+    "dev": "concurrently \"npm run start:dev --prefix server\" \"npm run dev --prefix client\"",
+    "dev:backend": "npm run start:dev --prefix server",
+    "dev:frontend": "npm run dev --prefix client"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

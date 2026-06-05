@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { 
-  Building2, MapPin, Printer, Percent, ShieldCheck, AlertCircle, Save, CheckCircle, Download, Upload
+  Building2, MapPin, Printer, Percent, ShieldCheck, AlertCircle, Save, CheckCircle, Download, Upload, Info, ArrowUpCircle, RefreshCw
 } from 'lucide-react';
 import { useBusinessSettings } from '../contexts/BusinessSettingsContext';
 import { useToast } from './ToastNotification';
@@ -13,9 +13,10 @@ interface BusinessSettingsProps {
     name: string;
     role: string;
   };
+  onOpenUpdater?: () => void;
 }
 
-export default function BusinessSettings({ user }: BusinessSettingsProps) {
+export default function BusinessSettings({ user, onOpenUpdater }: BusinessSettingsProps) {
   const { settings, updateSettings, validateRIF, formatRIF } = useBusinessSettings();
   const { addToast } = useToast();
 
@@ -248,18 +249,28 @@ export default function BusinessSettings({ user }: BusinessSettingsProps) {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', width: '100%', paddingBottom: '30px' }} className="animate-entrance">
+    <div className="view-container-layout animate-entrance" style={{ display: 'flex', flexDirection: 'column', gap: '24px', width: '100%', paddingBottom: '30px' }}>
       
       {/* HEADER SECTION */}
-      <div className="widget" style={{ padding: '20px', borderRadius: 'var(--card-radius)' }}>
+      <div className="widget view-header-widget has-grid-content" style={{ padding: '20px', borderRadius: 'var(--card-radius)' }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '16px' }}>
-          <div>
-            <h2 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text-primary)', margin: 0, fontFamily: 'var(--font-main)' }}>
-              ⚙️ Configuración del Negocio
-            </h2>
-            <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>
-              Define los parámetros operacionales, datos fiscales y configuración de facturación del comercio.
-            </p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            <div className="info-tooltip-wrapper">
+              <Info size={18} className="info-tooltip-icon" style={{ color: 'var(--text-secondary)', cursor: 'help', opacity: 0.8 }} />
+              <span className="tooltip-text">
+                Define los parámetros operacionales, datos fiscales y configuración de facturación del comercio.
+              </span>
+            </div>
+            {businessRIF && (
+              <span className="view-header-pill pill-teal">
+                RIF: {businessRIF}
+              </span>
+            )}
+            {ivaRate && (
+              <span className="view-header-pill pill-purple">
+                IVA: {ivaRate}%
+              </span>
+            )}
           </div>
           {!isAdmin && (
             <div style={{
@@ -587,6 +598,40 @@ export default function BusinessSettings({ user }: BusinessSettingsProps) {
               <span>IMPORTAR RESPALDO COMPLETO</span>
             </label>
           </div>
+        </div>
+      </div>
+
+      {/* SOFTWARE UPDATER WIDGET */}
+      <div className="widget" style={{ padding: '24px', borderRadius: 'var(--card-radius)', display: 'flex', flexDirection: 'column', gap: '20px', marginTop: '8px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px' }}>
+          <ArrowUpCircle size={20} style={{ color: 'var(--brand-primary)' }} />
+          <h3 style={{ fontSize: '15px', fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>
+            Actualizaciones del Sistema
+          </h3>
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
+          <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5, flex: 1 }}>
+            Versión actual del POS: <strong>v2.1.0</strong>. Comprueba si hay nuevas versiones del sistema para obtener mejoras fiscales, de seguridad y nuevas animaciones.
+          </p>
+
+          <button
+            type="button"
+            onClick={onOpenUpdater}
+            className="btn-yellow"
+            style={{
+              padding: '10px 20px',
+              borderRadius: 'var(--button-radius)',
+              fontSize: '12.5px',
+              fontWeight: 800,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px'
+            }}
+          >
+            <RefreshCw size={14} />
+            <span>Buscar Actualizaciones</span>
+          </button>
         </div>
       </div>
 

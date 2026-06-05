@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Search, Sun, Moon, RefreshCw, LogOut, Wifi, WifiOff, Menu } from 'lucide-react';
+import { Search, Sun, Moon, RefreshCw, LogOut, Wifi, WifiOff, Menu, ArrowUpCircle } from 'lucide-react';
 import avatarImg from '../assets/avatar.png';
 import { useExchangeRate } from '../contexts/ExchangeRateContext';
 import { getDatabase } from '../db/database';
@@ -29,7 +29,13 @@ interface HeaderProps {
   setSidebarExpanded?: (expanded: boolean) => void;
   onOpenCalculator: () => void;
   onSelectResult?: (tab: 'inventario' | 'clientes' | 'proveedores' | 'nomina', id: string, name: string) => void;
+  updateStatus: 'IDLE' | 'CHECKING' | 'UPDATE_AVAILABLE' | 'DOWNLOADING' | 'DOWNLOADED';
+  onOpenUpdater: () => void;
 }
+
+const escapeRegex = (string: string) => {
+  return string.replace(/[/\-\\^$*+?.()|[\]{}]/g, '\\$&');
+};
 
 export default function Header({
   searchTerm,
@@ -45,7 +51,9 @@ export default function Header({
   sidebarExpanded,
   setSidebarExpanded,
   onOpenCalculator,
-  onSelectResult
+  onSelectResult,
+  updateStatus,
+  onOpenUpdater
 }: HeaderProps) {
   const { dolarRate, isManual } = useExchangeRate();
   const [localInput, setLocalInput] = useState('');
@@ -67,7 +75,8 @@ export default function Header({
     const performSearch = async () => {
       try {
         const db = await getDatabase();
-        const searchRegex = new RegExp(localInput, 'i');
+        const escapedInput = escapeRegex(localInput);
+        const searchRegex = new RegExp(escapedInput, 'i');
         
         // 1. Search products
         const products = await db.products.find({
@@ -173,22 +182,20 @@ export default function Header({
         />
 
         {showDropdown && results.length > 0 && (
-          <div style={{
-            position: 'absolute',
-            top: '48px',
-            left: 0,
-            right: 0,
-            backgroundColor: 'var(--bg-card)',
-            border: '1.5px solid var(--border-color)',
-            borderRadius: '12px',
-            boxShadow: '0 10px 30px rgba(0, 0, 0, 0.3)',
-            zIndex: 1000,
-            maxHeight: '300px',
-            overflowY: 'auto',
-            display: 'flex',
-            flexDirection: 'column',
-            animation: 'entrance 0.2s cubic-bezier(0.16, 1, 0.3, 1)'
-          }}>
+          <div 
+            className="premium-popup"
+            style={{
+              position: 'absolute',
+              top: '48px',
+              left: 0,
+              right: 0,
+              maxHeight: '300px',
+              overflowY: 'auto',
+              display: 'flex',
+              flexDirection: 'column',
+              animation: 'entrance 0.2s cubic-bezier(0.16, 1, 0.3, 1)'
+            }}
+          >
             {results.map((res, index) => (
               <div
                 key={`${res.type}-${res.id}-${index}`}
@@ -279,6 +286,34 @@ export default function Header({
             title={syncState.isSyncing ? 'Sincronizando base de datos...' : 'Sincronizar base de datos'}
           >
             <RefreshCw size={16} className={syncState.isSyncing ? 'animate-spin' : ''} />
+          </button>
+        )}
+
+        {/* Software Update Notification Indicator */}
+        {(updateStatus === 'UPDATE_AVAILABLE' || updateStatus === 'DOWNLOADED') && (
+          <button 
+            className="theme-toggle-btn header-update-pulse-btn"
+            onClick={onOpenUpdater}
+            style={{
+              position: 'relative',
+              backgroundColor: updateStatus === 'DOWNLOADED' ? 'rgba(34, 197, 94, 0.1)' : 'rgba(251, 191, 36, 0.1)',
+              borderColor: updateStatus === 'DOWNLOADED' ? '#22c55e' : 'var(--brand-gold)',
+              color: updateStatus === 'DOWNLOADED' ? '#22c55e' : 'var(--brand-gold)',
+            }}
+            title={updateStatus === 'DOWNLOADED' ? "¡Descarga de actualización completa! Haz clic para reiniciar y aplicar." : "¡Nueva actualización del sistema disponible! Haz clic para ver detalles."}
+          >
+            <ArrowUpCircle size={18} />
+            {/* Pulsing Dot */}
+            <span style={{
+              position: 'absolute',
+              top: '2px',
+              right: '2px',
+              width: '8px',
+              height: '8px',
+              borderRadius: '50%',
+              backgroundColor: updateStatus === 'DOWNLOADED' ? '#22c55e' : '#ef4444',
+              boxShadow: updateStatus === 'DOWNLOADED' ? '0 0 8px #22c55e' : '0 0 8px #ef4444'
+            }} />
           </button>
         )}
 

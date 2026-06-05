@@ -55,6 +55,7 @@ export function stopBarcodeScanner(): void {
     try {
       scanner.clear();
     } catch { /* ignore */ }
+    scanner = null;
   }
 }
 

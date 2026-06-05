@@ -5,12 +5,12 @@ import { RxDBQueryBuilderPlugin } from 'rxdb/plugins/query-builder';
 // Habilita el plugin de construcción de consultas reactivas en RxDB
 addRxPlugin(RxDBQueryBuilderPlugin);
 
-// Habilita dev-mode en desarrollo si es necesario (Vite-native environment check)
-// if (import.meta.env.DEV) {
-//   import('rxdb/plugins/dev-mode').then(({ RxDBDevModePlugin }) => {
-//     addRxPlugin(RxDBDevModePlugin);
-//   });
-// }
+// Habilita dev-mode en desarrollo para validación de esquemas RxDB
+if (import.meta.env.DEV) {
+  import('rxdb/plugins/dev-mode').then(({ RxDBDevModePlugin }) => {
+    addRxPlugin(RxDBDevModePlugin);
+  });
+}
 
 // 1. Esquema JSON de Usuarios (Caché local seguro para login offline)
 const userSchema = {
@@ -43,8 +43,9 @@ const productSchema = {
     category: { type: 'string' },
     price: { type: 'number' },
     cost: { type: 'number' },
-    stock: { type: 'integer' },
-    minStock: { type: 'integer' },
+    stock: { type: 'number' },
+    minStock: { type: 'number' },
+    batches: { type: 'string' },
     version: { type: 'integer' },
     updatedAt: { type: 'string' }
   },
@@ -70,7 +71,7 @@ const saleSchema = {
         type: 'object',
         properties: {
           productId: { type: 'string' },
-          quantity: { type: 'integer' },
+          quantity: { type: 'number' },
           price: { type: 'number' }
         },
         required: ['productId', 'quantity', 'price']
@@ -139,7 +140,7 @@ const purchaseSchema = {
         type: 'object',
         properties: {
           productId: { type: 'string' },
-          quantity: { type: 'integer' },
+          quantity: { type: 'number' },
           cost: { type: 'number' }
         },
         required: ['productId', 'quantity', 'cost']
@@ -212,6 +213,7 @@ export type ProductDocType = {
   cost: number;
   stock: number;
   minStock: number;
+  batches?: string;
   version: number;
   updatedAt: string;
 };
@@ -305,8 +307,15 @@ let dbPromise: Promise<StockMasterDatabase> | null = null;
 // Inicializador único de la base de datos IndexedDB local
 export function getDatabase(): Promise<StockMasterDatabase> {
   if (!dbPromise) {
+    const currentDbName = 'stockmaster_local_db_v4';
+    const savedDbName = localStorage.getItem('active_rxdb_name');
+    if (savedDbName !== currentDbName) {
+      localStorage.removeItem('last_synced_at');
+      localStorage.setItem('active_rxdb_name', currentDbName);
+    }
+
     dbPromise = createRxDatabase<StockMasterCollections>({
-      name: 'stockmaster_local_db_v2',
+      name: currentDbName,
       storage: getRxStorageDexie(),
       multiInstance: true,
       eventReduce: true

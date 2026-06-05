@@ -39,8 +39,17 @@ export default function Sidebar({
   onlineStatus
 }: SidebarProps) {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
-  const isAdminOrAuditor = user.role === 'ADMIN' || user.role === 'AUDITOR';
-  const isAdmin = user.role === 'ADMIN';
+  const ALLOWED_TABS: Record<string, string[]> = {
+    ADMIN: ['dashboard', 'pos', 'inventario', 'compras', 'nomina', 'clientes', 'proveedores', 'cierre', 'analiticas', 'auditoria', 'settings'],
+    AUDITOR: ['dashboard', 'inventario', 'clientes', 'proveedores', 'analiticas', 'auditoria'],
+    CASHIER: ['pos', 'cierre']
+  };
+
+  const roleAllowedTabs = ALLOWED_TABS[user.role] || [];
+  const getDefaultTab = () => {
+    if (user.role === 'CASHIER') return 'pos';
+    return 'dashboard';
+  };
 
   // Navigation tabs adapted to StockMasterPro with keyboard shortcut hints (D3)
   const shortcutMap: Record<string, string> = {
@@ -58,23 +67,22 @@ export default function Sidebar({
     { id: 'clientes' as const, icon: Users, label: 'Clientes' },
     { id: 'proveedores' as const, icon: Truck, label: 'Proveedores' },
     { id: 'cierre' as const, icon: Lock, label: 'Arqueo de Caja' },
-    ...(isAdminOrAuditor 
-      ? [
-          { id: 'analiticas' as const, icon: BarChart3, label: 'Reportes' },
-          { id: 'auditoria' as const, icon: ShieldAlert, label: 'Auditoría' }
-        ]
-      : []),
-    ...(isAdmin
-      ? [
-          { id: 'settings' as const, icon: Settings, label: 'Configuración' }
-        ]
-      : [])
-  ];
+    { id: 'analiticas' as const, icon: BarChart3, label: 'Reportes' },
+    { id: 'auditoria' as const, icon: ShieldAlert, label: 'Auditoría' },
+    { id: 'settings' as const, icon: Settings, label: 'Configuración' }
+  ].filter(item => roleAllowedTabs.includes(item.id));
 
-  // Split primary and drawer items for mobile view
+  // Partition navigation dynamically for mobile bottom bar
+  const showMoreButton = navItems.length > 5;
   const primaryIds = ['dashboard', 'pos', 'inventario', 'cierre'];
-  const primaryItems = navItems.filter(item => primaryIds.includes(item.id));
-  const drawerItems = navItems.filter(item => !primaryIds.includes(item.id));
+  
+  const primaryItems = showMoreButton 
+    ? navItems.filter(item => primaryIds.includes(item.id))
+    : navItems;
+    
+  const drawerItems = showMoreButton 
+    ? navItems.filter(item => !primaryIds.includes(item.id))
+    : [];
 
   // Determine if active tab is in the drawer, to highlight the "Más" button
   const isMoreActive = drawerItems.some(item => item.id === activeTab);
@@ -88,7 +96,7 @@ export default function Sidebar({
             <div 
               className="logo-container" 
               title="StockMasterPro" 
-              onClick={() => setActiveTab('dashboard')}
+              onClick={() => setActiveTab(getDefaultTab() as any)}
             >
               <img src={logoImg} alt="Logotipo Circular" className="logo-img" />
             </div>
@@ -179,14 +187,16 @@ export default function Sidebar({
         })}
         
         {/* Toggle Button for More Menu */}
-        <button
-          className={`mobile-nav-btn ${isMoreActive ? 'active' : ''}`}
-          onClick={() => setIsDrawerOpen(!isDrawerOpen)}
-          title="Ver Más Opciones"
-        >
-          <MoreHorizontal size={20} />
-          <span className="mobile-nav-label">Más</span>
-        </button>
+        {showMoreButton && (
+          <button
+            className={`mobile-nav-btn ${isMoreActive ? 'active' : ''}`}
+            onClick={() => setIsDrawerOpen(!isDrawerOpen)}
+            title="Ver Más Opciones"
+          >
+            <MoreHorizontal size={20} />
+            <span className="mobile-nav-label">Más</span>
+          </button>
+        )}
       </div>
 
       {/* Bottom Drawer Overlay */}

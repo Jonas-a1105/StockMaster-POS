@@ -9,36 +9,42 @@ export class AuthController {
   constructor(private authService: AuthService) {}
 
   @Post('register')
-  async register(@Body() body: unknown) {
+  async register(@Req() req: FastifyRequest, @Body() body: unknown) {
     const result = RegisterSchema.safeParse(body);
     if (!result.success) {
       const errorMessages = result.error.issues.map(err => err.message).join(' | ');
       throw new BadRequestException(errorMessages);
     }
-    return this.authService.register(result.data);
+    const ip = req.ip || 'unknown';
+    const ua = (req.headers['user-agent'] as string) || 'Unknown';
+    return this.authService.register(result.data, ip, ua);
   }
 
   @Post('login')
   @HttpCode(HttpStatus.OK)
-  async login(@Body() body: unknown) {
+  async login(@Req() req: FastifyRequest, @Body() body: unknown) {
     const result = LoginSchema.safeParse(body);
     if (!result.success) {
       const errorMessages = result.error.issues.map(err => err.message).join(' | ');
       throw new BadRequestException(errorMessages);
     }
-    const user = await this.authService.validateUser(result.data);
+    const ip = req.ip || 'unknown';
+    const ua = (req.headers['user-agent'] as string) || 'Unknown';
+    const user = await this.authService.validateUser(result.data, ip, ua);
     return this.authService.generateToken(user);
   }
 
   @Post('login-offline')
   @HttpCode(HttpStatus.OK)
-  async loginOffline(@Body() body: unknown) {
+  async loginOffline(@Req() req: FastifyRequest, @Body() body: unknown) {
     const result = OfflineLoginSchema.safeParse(body);
     if (!result.success) {
       const errorMessages = result.error.issues.map(err => err.message).join(' | ');
       throw new BadRequestException(errorMessages);
     }
-    const user = await this.authService.validateOfflineUser(result.data);
+    const ip = req.ip || 'unknown';
+    const ua = (req.headers['user-agent'] as string) || 'Unknown';
+    const user = await this.authService.validateOfflineUser(result.data, ip, ua);
     return this.authService.generateToken(user);
   }
 
@@ -58,9 +64,15 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   async logout(@Req() req: FastifyRequest) {
     const user = (req as any).user;
-    await this.authService['prisma'].refreshToken.deleteMany({
-      where: { userId: user.sub }
-    });
+    const authHeader = req.headers['authorization'];
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      this.authService.blacklistToken(token);
+    }
+    const ip = req.ip || 'unknown';
+    const ua = (req.headers['user-agent'] as string) || 'Unknown';
+    await this.authService.revokeRefreshTokens(user.sub);
+    await this.authService.logLogout(user.sub, ip, ua);
     return { success: true, message: 'Sesión cerrada exitosamente.' };
   }
 }

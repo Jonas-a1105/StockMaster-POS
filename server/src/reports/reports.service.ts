@@ -23,41 +23,29 @@ export class ReportsService {
     // B. Calcular el costo total e histórico de las ventas procesadas para calcular ganancia neta
     const saleItems = await this.prisma.saleItem.findMany({
       include: {
-        product: {
-          select: {
-            cost: true
-          }
-        }
+        product: { select: { cost: true } }
       }
     });
-
-    const totalCostOfSales = saleItems.reduce((acc, item) => {
-      const itemCost = item.product?.cost || 0;
-      return acc + (itemCost * item.quantity);
-    }, 0);
+    const totalCostOfSales = saleItems.reduce(
+      (sum, item) => sum + item.quantity * item.product.cost,
+      0
+    );
 
     const netProfit = totalSales - totalCostOfSales;
 
     // C. Valor total estimado del inventario actual
-    const products = await this.prisma.product.findMany({
-      select: {
-        stock: true,
-        cost: true,
-        price: true
-      }
-    });
-
-    const activeInventoryCostValue = products.reduce((acc, prod) => acc + (prod.cost * prod.stock), 0);
-    const activeInventoryRetailValue = products.reduce((acc, prod) => acc + (prod.price * prod.stock), 0);
+    const allProducts = await this.prisma.product.findMany();
+    const activeInventoryCostValue = allProducts.reduce(
+      (sum, p) => sum + p.cost * p.stock,
+      0
+    );
+    const activeInventoryRetailValue = allProducts.reduce(
+      (sum, p) => sum + p.price * p.stock,
+      0
+    );
 
     // D. Cantidad de productos en estado de "Bajo Stock"
-    const lowStockCount = await this.prisma.product.count({
-      where: {
-        stock: {
-          lte: this.prisma.product.fields.minStock
-        }
-      }
-    });
+    const lowStockCount = allProducts.filter(p => p.stock <= p.minStock).length;
 
     return {
       kpis: {
@@ -76,38 +64,117 @@ export class ReportsService {
   async getSalesByCategory() {
     const saleItems = await this.prisma.saleItem.findMany({
       include: {
+        product: { select: { category: true, price: true } }
+      }
+    });
+
+    const grouped = new Map<string, { quantitySold: number; totalRevenue: number }>();
+    for (const item of saleItems) {
+      const cat = item.product.category || 'General';
+      const prev = grouped.get(cat) || { quantitySold: 0, totalRevenue: 0 };
+      prev.quantitySold += item.quantity;
+      prev.totalRevenue += item.price * item.quantity;
+      grouped.set(cat, prev);
+    }
+
+    return Array.from(grouped.entries()).map(([category, data]) => ({
+      category,
+      quantitySold: data.quantitySold,
+      totalRevenue: Number(data.totalRevenue.toFixed(2))
+    }));
+  }
+
+  // 3. Obtener productos estrella (top más vendidos)
+  async getStarProducts(limit = 10) {
+    const saleItems = await this.prisma.saleItem.findMany({
+      include: {
         product: {
-          select: {
-            category: true,
-            price: true
-          }
+          select: { id: true, name: true, code: true, category: true, price: true, cost: true }
         }
       }
     });
 
-    const categoryMap: { [key: string]: { quantity: number; revenue: number } } = {};
+    const grouped = new Map<string, {
+      id: string; name: string; sku: string; category: string;
+      unitsSold: number; retailPrice: number; costPrice: number;
+      totalRevenue: number; netMargin: number; roi: number;
+    }>();
 
     for (const item of saleItems) {
-      const category = item.product?.category || 'General';
-      const itemRevenue = item.price * item.quantity;
-
-      if (!categoryMap[category]) {
-        categoryMap[category] = { quantity: 0, revenue: 0 };
-      }
-
-      categoryMap[category].quantity += item.quantity;
-      categoryMap[category].revenue += itemRevenue;
+      const prod = item.product;
+      const prev = grouped.get(prod.id) || {
+        id: prod.id, name: prod.name, sku: prod.code, category: prod.category,
+        unitsSold: 0, retailPrice: prod.price, costPrice: prod.cost,
+        totalRevenue: 0, netMargin: 0, roi: 0
+      };
+      prev.unitsSold += item.quantity;
+      prev.totalRevenue += item.price * item.quantity;
+      grouped.set(prod.id, prev);
     }
 
-    // Formatea los datos para gráficos
-    return Object.keys(categoryMap).map(cat => ({
-      category: cat,
-      quantitySold: categoryMap[cat].quantity,
-      totalRevenue: Number(categoryMap[cat].revenue.toFixed(2))
-    }));
+    const products = Array.from(grouped.values()).map(p => {
+      const totalCost = p.unitsSold * p.costPrice;
+      p.netMargin = p.totalRevenue - totalCost;
+      p.roi = totalCost > 0 ? Math.round((p.netMargin / totalCost) * 100) : 0;
+      p.totalRevenue = Number(p.totalRevenue.toFixed(2));
+      return p;
+    });
+
+    products.sort((a, b) => b.totalRevenue - a.totalRevenue);
+    return products.slice(0, limit);
   }
 
-  // 3. Obtener el historial de los ultimos logs de auditoría para el panel del Auditor
+  // 4. Obtener rendimiento semanal (Ingresos vs Costos) para gráfica financiera
+  async getWeeklyPerformance() {
+    const now = new Date();
+    const fourWeeksAgo = new Date(now.getTime() - 28 * 24 * 60 * 60 * 1000);
+
+    const sales = await this.prisma.sale.findMany({
+      where: {
+        createdAt: { gte: fourWeeksAgo }
+      },
+      include: {
+        saleItems: {
+          include: {
+            product: { select: { cost: true } }
+          }
+        }
+      },
+      orderBy: { createdAt: 'asc' }
+    });
+
+    // Group into 4 weekly buckets
+    const buckets: Array<{ label: string; totalRevenue: number; totalCost: number }> = [];
+    const msPerWeek = 7 * 24 * 60 * 60 * 1000;
+    const startTime = fourWeeksAgo.getTime();
+
+    for (let w = 0; w < 4; w++) {
+      const weekStart = new Date(startTime + w * msPerWeek);
+      const weekEnd = new Date(startTime + (w + 1) * msPerWeek);
+      let totalRevenue = 0;
+      let totalCost = 0;
+
+      for (const sale of sales) {
+        const t = sale.createdAt.getTime();
+        if (t >= weekStart.getTime() && t < weekEnd.getTime()) {
+          totalRevenue += sale.total;
+          for (const item of sale.saleItems) {
+            totalCost += item.quantity * item.product.cost;
+          }
+        }
+      }
+
+      buckets.push({
+        label: `Semana ${w + 1}`,
+        totalRevenue: Number(totalRevenue.toFixed(2)),
+        totalCost: Number(totalCost.toFixed(2)),
+      });
+    }
+
+    return buckets;
+  }
+
+  // 5. Obtener el historial de los ultimos logs de auditoría para el panel del Auditor
   async getRecentAuditLogs(limit = 10) {
     return this.prisma.auditLog.findMany({
       take: limit,

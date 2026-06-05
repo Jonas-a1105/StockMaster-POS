@@ -55,15 +55,48 @@ export default function RateCalculatorModal({ isOpen, onClose }: RateCalculatorM
     }
   };
 
-  // Safe arithmetic evaluator
+  // Safe arithmetic evaluator (no eval/new Function)
   const evaluateExpression = (expr: string): number => {
-    // Only allow numbers, decimals, and basic math operators
     const sanitized = expr.replace(/[^0-9+\-*/.]/g, '');
     if (!sanitized) return 0;
     try {
-      // eslint-disable-next-line no-new-func
-      const res = new Function(`return ${sanitized}`)();
-      return typeof res === 'number' && isFinite(res) ? res : 0;
+      const tokens = sanitized.match(/(\d+\.?\d*|\.\d+|[+\-*/])/g);
+      if (!tokens) return 0;
+
+      const nums: number[] = [];
+      const ops: string[] = [];
+      let i = 0;
+
+      const applyOp = () => {
+        const b = nums.pop()!;
+        const a = nums.pop()!;
+        const op = ops.pop()!;
+        switch (op) {
+          case '+': nums.push(a + b); break;
+          case '-': nums.push(a - b); break;
+          case '*': nums.push(a * b); break;
+          case '/': nums.push(b !== 0 ? a / b : 0); break;
+        }
+      };
+
+      const prec: Record<string, number> = { '+': 1, '-': 1, '*': 2, '/': 2 };
+
+      while (i < tokens.length) {
+        const tok = tokens[i];
+        if (/\d/.test(tok)) {
+          nums.push(parseFloat(tok));
+        } else if ('+-*/'.includes(tok)) {
+          while (ops.length > 0 && prec[ops[ops.length - 1]] >= prec[tok]) {
+            applyOp();
+          }
+          ops.push(tok);
+        }
+        i++;
+      }
+
+      while (ops.length > 0) applyOp();
+      const res = nums[0] || 0;
+      return isFinite(res) ? res : 0;
     } catch {
       return 0;
     }

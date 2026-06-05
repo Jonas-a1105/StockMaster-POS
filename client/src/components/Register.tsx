@@ -2,13 +2,15 @@ import { useState } from 'react';
 import { User, Mail, Lock, Shield, KeyRound, AlertTriangle, CheckCircle } from 'lucide-react';
 import { registerOnline } from '../db/auth';
 import logoImg from '../assets/logo.png';
+import CustomSelect from './CustomSelect';
 
 interface RegisterProps {
   onRegisterSuccess: () => void;
   onNavigateToLogin: () => void;
+  onBackToLanding?: () => void;
 }
 
-export default function Register({ onRegisterSuccess, onNavigateToLogin }: RegisterProps) {
+export default function Register({ onRegisterSuccess, onNavigateToLogin, onBackToLanding }: RegisterProps) {
   // Estados del Formulario
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -33,8 +35,28 @@ export default function Register({ onRegisterSuccess, onNavigateToLogin }: Regis
       return;
     }
 
-    if (password.length < 6) {
-      setErrorMsg('La contraseña debe tener al menos 6 caracteres.');
+    if (password.length < 8) {
+      setErrorMsg('La contraseña debe tener al menos 8 caracteres.');
+      setIsLoading(false);
+      return;
+    }
+    if (!/[A-Z]/.test(password)) {
+      setErrorMsg('La contraseña debe contener al menos una mayúscula.');
+      setIsLoading(false);
+      return;
+    }
+    if (!/[a-z]/.test(password)) {
+      setErrorMsg('La contraseña debe contener al menos una minúscula.');
+      setIsLoading(false);
+      return;
+    }
+    if (!/[0-9]/.test(password)) {
+      setErrorMsg('La contraseña debe contener al menos un número.');
+      setIsLoading(false);
+      return;
+    }
+    if (!/[^a-zA-Z0-9]/.test(password)) {
+      setErrorMsg('La contraseña debe contener al menos un carácter especial (ej. !, @, #, $, etc.).');
       setIsLoading(false);
       return;
     }
@@ -79,7 +101,8 @@ export default function Register({ onRegisterSuccess, onNavigateToLogin }: Regis
       position: 'relative',
       overflow: 'hidden',
       backgroundColor: 'var(--bg-primary)',
-      transition: 'background-color 0.5s ease'
+      transition: 'background-color 0.5s ease',
+      fontFamily: 'var(--font-main)'
     }}>
       {/* Inyecta estilos CSS específicos para hover, keyframes de orbes de fondo y glows */}
       <style>{`
@@ -99,11 +122,11 @@ export default function Register({ onRegisterSuccess, onNavigateToLogin }: Regis
           100% { transform: scale(0.95); opacity: 0.2; }
         }
         .glass-input:focus {
-          border-color: var(--brand-teal) !important;
-          box-shadow: 0 0 14px rgba(14, 165, 164, 0.25) !important;
+          border-color: var(--brand-primary) !important;
+          box-shadow: 0 0 14px var(--brand-primary-light) !important;
         }
         .login-btn-gradient {
-          background: var(--grad-teal) !important;
+          background: var(--brand-primary) !important;
           border: none !important;
           color: #060608 !important;
           font-family: var(--font-main) !important;
@@ -114,20 +137,20 @@ export default function Register({ onRegisterSuccess, onNavigateToLogin }: Regis
           transition: all 0.25s ease !important;
         }
         .login-btn-gradient:hover {
-          filter: brightness(1.15) !important;
+          background: var(--brand-primary-hover) !important;
           transform: translateY(-2.5px) !important;
-          box-shadow: 0 8px 25px rgba(16, 227, 178, 0.35) !important;
+          box-shadow: 0 8px 25px var(--brand-primary-light) !important;
         }
         .login-btn-gradient:active {
           transform: translateY(0.5px) !important;
         }
         .glass-auth-card {
           background: rgba(20, 20, 23, 0.65) !important;
-          backdrop-filter: blur(25px) !important;
-          -webkit-backdrop-filter: blur(25px) !important;
-          border: 1px solid rgba(255, 255, 255, 0.05) !important;
-          box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4) !important;
-          border-radius: 36px !important;
+          backdrop-filter: blur(var(--glass-blur, 25px)) !important;
+          -webkit-backdrop-filter: blur(var(--glass-blur, 25px)) !important;
+          border: 1.5px solid var(--border-color) !important;
+          box-shadow: var(--card-shadow) !important;
+          border-radius: var(--card-radius, 24px) !important;
           padding: 40px !important;
           width: 100%;
           max-width: 450px;
@@ -137,15 +160,15 @@ export default function Register({ onRegisterSuccess, onNavigateToLogin }: Regis
         }
         .light-theme .glass-auth-card {
           background: rgba(255, 255, 255, 0.65) !important;
-          border: 1px solid rgba(0, 0, 0, 0.05) !important;
-          box-shadow: 0 20px 50px rgba(160, 163, 189, 0.15) !important;
+          border: 1.5px solid var(--border-color) !important;
+          box-shadow: var(--card-shadow) !important;
         }
         .glass-select {
           width: 100%;
           padding: 11px 14px 11px 42px;
           background-color: var(--bg-input);
           border: 1.5px solid var(--border-color);
-          border-radius: 14px;
+          border-radius: var(--input-radius, 12px);
           color: var(--text-primary);
           font-family: var(--font-main);
           font-size: 13.5px;
@@ -157,8 +180,8 @@ export default function Register({ onRegisterSuccess, onNavigateToLogin }: Regis
           -moz-appearance: none;
         }
         .glass-select:focus {
-          border-color: var(--brand-teal) !important;
-          box-shadow: 0 0 14px rgba(14, 165, 164, 0.25) !important;
+          border-color: var(--brand-primary) !important;
+          box-shadow: 0 0 14px var(--brand-primary-light) !important;
         }
       `}</style>
 
@@ -170,7 +193,7 @@ export default function Register({ onRegisterSuccess, onNavigateToLogin }: Regis
         width: '450px',
         height: '450px',
         borderRadius: '50%',
-        background: 'radial-gradient(circle, rgba(14,165,164,0.18) 0%, rgba(14,165,164,0) 70%)',
+        background: 'radial-gradient(circle, var(--brand-primary-light) 0%, transparent 70%)',
         filter: 'blur(60px)',
         zIndex: 1,
         animation: 'float-slow-1 12s infinite alternate ease-in-out'
@@ -182,7 +205,7 @@ export default function Register({ onRegisterSuccess, onNavigateToLogin }: Regis
         width: '450px',
         height: '450px',
         borderRadius: '50%',
-        background: 'radial-gradient(circle, rgba(223,158,255,0.15) 0%, rgba(223,158,255,0) 70%)',
+        background: 'radial-gradient(circle, hsla(var(--brand-primary-h), var(--brand-primary-s), var(--brand-primary-l), 0.1) 0%, transparent 70%)',
         filter: 'blur(60px)',
         zIndex: 1,
         animation: 'float-slow-2 15s infinite alternate ease-in-out'
@@ -191,49 +214,30 @@ export default function Register({ onRegisterSuccess, onNavigateToLogin }: Regis
       {/* Frosted Glassmorphism Register Container */}
       <div className="glass-auth-card animate-entrance">
         
-        {/* Cabecera superior */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '24px', justifyContent: 'center' }}>
-          <span style={{ fontSize: '20px' }}>🛡️</span>
-          <span style={{
-            fontFamily: 'Outfit',
-            fontWeight: 800,
-            fontSize: '18px',
-            color: 'var(--brand-teal)',
-            letterSpacing: '-0.3px'
-          }}>StockMasterPro</span>
-        </div>
-
-        {/* Presentación del Logotipo Corporativo con Anillo de Pulsación */}
-        <div className="logo-glow-wrapper" style={{ position: 'relative', margin: '0 auto 16px auto', width: '76px', height: '76px' }}>
-          <div style={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            borderRadius: '50%',
-            background: 'var(--brand-teal)',
-            animation: 'pulse-ring 3s infinite',
-            zIndex: 0
-          }}></div>
+        {/* Cabecera superior (Logo y Nombre en Una Sola Línea) */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', justifyContent: 'center', width: '100%', marginBottom: '28px' }}>
           <img 
             src={logoImg} 
-            alt="Logotipo StockMaster" 
+            alt="Logo" 
             style={{ 
-              width: '76px', 
-              height: '76px', 
-              position: 'relative', 
-              zIndex: 1, 
+              width: '42px', 
+              height: '42px', 
               borderRadius: '50%', 
               border: '2px solid rgba(255, 255, 255, 0.1)',
-              boxShadow: '0 4px 15px rgba(0,0,0,0.2)'
+              boxShadow: '0 4px 15px rgba(0,0,0,0.2)' 
             }} 
           />
+          <span style={{
+            fontFamily: 'var(--font-script)',
+            fontSize: '34px',
+            color: 'var(--brand-primary)',
+            letterSpacing: '0.5px'
+          }}>StockMasterPro</span>
         </div>
 
         {/* Título */}
         <div style={{ textAlign: 'center', marginBottom: '24px' }}>
-          <h2 style={{ fontFamily: 'Outfit', fontWeight: 800, fontSize: '28px', color: 'var(--text-primary)', letterSpacing: '-0.5px', marginBottom: '4px' }}>
+          <h2 style={{ fontFamily: 'var(--font-main)', fontWeight: 800, fontSize: '28px', color: 'var(--text-primary)', letterSpacing: '-0.5px', marginBottom: '4px' }}>
             Registro de Cajero
           </h2>
           <p style={{ fontSize: '12.5px', color: 'var(--text-secondary)' }}>
@@ -250,7 +254,7 @@ export default function Register({ onRegisterSuccess, onNavigateToLogin }: Regis
             backgroundColor: 'rgba(239, 68, 68, 0.08)',
             border: '1px solid rgba(239, 68, 68, 0.2)',
             padding: '12px 16px',
-            borderRadius: '14px',
+            borderRadius: 'var(--button-radius, 12px)',
             color: '#ef4444',
             fontSize: '12.5px',
             fontWeight: 700,
@@ -270,7 +274,7 @@ export default function Register({ onRegisterSuccess, onNavigateToLogin }: Regis
             backgroundColor: 'rgba(32, 227, 178, 0.08)',
             border: '1px solid rgba(32, 227, 178, 0.2)',
             padding: '12px 16px',
-            borderRadius: '14px',
+            borderRadius: 'var(--button-radius, 12px)',
             color: '#20e3b2',
             fontSize: '12.5px',
             fontWeight: 800,
@@ -308,9 +312,9 @@ export default function Register({ onRegisterSuccess, onNavigateToLogin }: Regis
                   padding: '11px 14px 11px 42px',
                   backgroundColor: 'var(--bg-input)',
                   border: '1.5px solid var(--border-color)',
-                  borderRadius: '14px',
+                  borderRadius: 'var(--input-radius, 12px)',
                   color: 'var(--text-primary)',
-                  fontFamily: 'Outfit',
+                  fontFamily: 'var(--font-main)',
                   fontSize: '13.5px',
                   outline: 'none',
                   transition: 'all 0.25s ease'
@@ -343,9 +347,9 @@ export default function Register({ onRegisterSuccess, onNavigateToLogin }: Regis
                   padding: '11px 14px 11px 42px',
                   backgroundColor: 'var(--bg-input)',
                   border: '1.5px solid var(--border-color)',
-                  borderRadius: '14px',
+                  borderRadius: 'var(--input-radius, 12px)',
                   color: 'var(--text-primary)',
-                  fontFamily: 'Outfit',
+                  fontFamily: 'var(--font-main)',
                   fontSize: '13.5px',
                   outline: 'none',
                   transition: 'all 0.25s ease'
@@ -378,9 +382,9 @@ export default function Register({ onRegisterSuccess, onNavigateToLogin }: Regis
                   padding: '11px 14px 11px 42px',
                   backgroundColor: 'var(--bg-input)',
                   border: '1.5px solid var(--border-color)',
-                  borderRadius: '14px',
+                  borderRadius: 'var(--input-radius, 12px)',
                   color: 'var(--text-primary)',
-                  fontFamily: 'Outfit',
+                  fontFamily: 'var(--font-main)',
                   fontSize: '13.5px',
                   outline: 'none',
                   transition: 'all 0.25s ease'
@@ -395,33 +399,17 @@ export default function Register({ onRegisterSuccess, onNavigateToLogin }: Regis
               Rol Asignado *
             </label>
             <div style={{ position: 'relative', width: '100%' }}>
-              <Shield size={16} style={{
-                position: 'absolute',
-                left: '14px',
-                top: '50%',
-                transform: 'translateY(-50%)',
-                color: 'var(--text-muted)',
-                zIndex: 2
-              }} />
-              <select
+              <CustomSelect
                 value={role}
-                onChange={(e) => setRole(e.target.value as any)}
-                className="glass-select"
-              >
-                <option value="CASHIER">Cajero (Operación POS)</option>
-                <option value="ADMIN">Administrador (Control Total)</option>
-                <option value="AUDITOR">Auditor (Bitácoras y Reportes)</option>
-              </select>
-              {/* Flecha personalizada esmerilada para select */}
-              <div style={{
-                position: 'absolute',
-                right: '16px',
-                top: '50%',
-                transform: 'translateY(-50%)',
-                color: 'var(--text-secondary)',
-                pointerEvents: 'none',
-                fontSize: '10px'
-              }}>▼</div>
+                onChange={(val) => setRole(val as any)}
+                options={[
+                  { value: 'CASHIER', label: 'Cajero (Operación POS)' },
+                  { value: 'ADMIN', label: 'Administrador (Control Total)' },
+                  { value: 'AUDITOR', label: 'Auditor (Bitácoras y Reportes)' }
+                ]}
+                icon={<Shield size={16} style={{ color: 'var(--text-muted)' }} />}
+                style={{ width: '100%' }}
+              />
             </div>
           </div>
 
@@ -454,9 +442,9 @@ export default function Register({ onRegisterSuccess, onNavigateToLogin }: Regis
                   padding: '11px 14px 11px 42px',
                   backgroundColor: 'var(--bg-input)',
                   border: '1.5px solid var(--border-color)',
-                  borderRadius: '14px',
+                  borderRadius: 'var(--input-radius, 12px)',
                   color: 'var(--text-primary)',
-                  fontFamily: 'Outfit',
+                  fontFamily: 'var(--font-main)',
                   fontSize: '13.5px',
                   outline: 'none',
                   transition: 'all 0.25s ease'
@@ -473,7 +461,7 @@ export default function Register({ onRegisterSuccess, onNavigateToLogin }: Regis
             style={{
               width: '100%',
               padding: '14px 0',
-              borderRadius: '14px',
+              borderRadius: 'var(--button-radius, 12px)',
               justifyContent: 'center',
               marginTop: '12px',
               opacity: isLoading ? 0.65 : 1,
@@ -498,19 +486,43 @@ export default function Register({ onRegisterSuccess, onNavigateToLogin }: Regis
           <span 
             onClick={onNavigateToLogin}
             style={{
-              color: 'var(--brand-teal)',
+              color: 'var(--brand-primary)',
               fontWeight: 800,
               cursor: 'pointer',
               textDecoration: 'none',
               marginLeft: '4px',
-              transition: 'all 0.2s'
+              transition: 'all 0.2s',
+              fontFamily: 'var(--font-main)'
             }}
-            onMouseEnter={(e) => e.currentTarget.style.color = '#20e3b2'}
-            onMouseLeave={(e) => e.currentTarget.style.color = 'var(--brand-teal)'}
+            onMouseEnter={(e) => e.currentTarget.style.color = 'var(--brand-primary-hover)'}
+            onMouseLeave={(e) => e.currentTarget.style.color = 'var(--brand-primary)'}
           >
             Iniciar Sesión
           </span>
         </div>
+        
+        {onBackToLanding && (
+          <div style={{
+            textAlign: 'center',
+            marginTop: '16px',
+            fontSize: '12.5px'
+          }}>
+            <span 
+              onClick={onBackToLanding}
+              style={{
+                color: 'var(--text-muted)',
+                fontWeight: 700,
+                cursor: 'pointer',
+                transition: 'all 0.2s',
+                textDecoration: 'underline'
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.color = 'var(--text-primary)'}
+              onMouseLeave={(e) => e.currentTarget.style.color = 'var(--text-muted)'}
+            >
+              ← Volver al inicio
+            </span>
+          </div>
+        )}
 
       </div>
     </div>

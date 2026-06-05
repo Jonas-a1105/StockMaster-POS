@@ -273,23 +273,19 @@ export default function SalesChartCard({ isDarkMode }: SalesChartCardProps) {
           </div>
 
           {showYearDropdown && (
-            <div style={{
-              position: 'absolute',
-              top: '100%',
-              right: 0,
-              backgroundColor: 'var(--bg-widget)',
-              border: '1px solid var(--border-color)',
-              borderRadius: '12px',
-              padding: '6px',
-              zIndex: 100,
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '4px',
-              minWidth: '90px',
-              marginTop: '4px',
-              boxShadow: '0 8px 30px rgba(0,0,0,0.15)',
-              backdropFilter: 'blur(10px)'
-            }}>
+            <div 
+              className="premium-popup"
+              style={{
+                position: 'absolute',
+                top: '100%',
+                right: 0,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '4px',
+                minWidth: '90px',
+                marginTop: '4px'
+              }}
+            >
               {availableYears.map(year => (
                 <div 
                   key={year}
@@ -313,11 +309,6 @@ export default function SalesChartCard({ isDarkMode }: SalesChartCardProps) {
               ))}
             </div>
           )}
-          
-          <button className="btn-yellow" onClick={() => alert('¡Generando reporte en PDF de ventas anuales!')}>
-            <Download size={14} />
-            <span>Descargar</span>
-          </button>
         </div>
       </div>
       

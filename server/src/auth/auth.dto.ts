@@ -8,7 +8,8 @@ export const RegisterSchema = z.object({
     .max(128, { message: 'La contraseña no debe exceder 128 caracteres.' })
     .regex(/[A-Z]/, { message: 'Debe contener al menos una mayúscula.' })
     .regex(/[a-z]/, { message: 'Debe contener al menos una minúscula.' })
-    .regex(/[0-9]/, { message: 'Debe contener al menos un número.' }),
+    .regex(/[0-9]/, { message: 'Debe contener al menos un número.' })
+    .regex(/[^a-zA-Z0-9]/, { message: 'Debe contener al menos un carácter especial (ej. !, @, #, $, etc.).' }),
   name: z.string().min(2, { message: 'El nombre debe tener al menos 2 caracteres.' }).max(100),
   role: z.enum(['ADMIN', 'CASHIER', 'AUDITOR'], { message: 'Rol de usuario inválido.' }),
   pin: z

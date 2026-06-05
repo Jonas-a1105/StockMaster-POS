@@ -1,28 +1,29 @@
 import { z } from 'zod';
 
 export const SyncProductSchema = z.object({
-  id: z.string().uuid(),
+  id: z.string().min(1),
   code: z.string().min(1).max(50),
   name: z.string().min(1),
   category: z.string().optional().default('General'),
   price: z.number().positive(),
   cost: z.number().min(0).optional().default(0),
-  stock: z.number().int().min(0),
-  minStock: z.number().int().min(0).optional().default(5),
+  stock: z.number().min(0),
+  minStock: z.number().min(0).optional().default(5),
+  batches: z.string().optional().nullable(),
   version: z.number().int().optional().default(1),
   updatedAt: z.string().datetime(),
 });
 
 export const SyncSaleItemSchema = z.object({
-  productId: z.string().uuid(),
-  quantity: z.number().int().positive(),
+  productId: z.string().min(1),
+  quantity: z.number().positive(),
   price: z.number().positive(),
 });
 
 export const SyncSaleSchema = z.object({
-  id: z.string().uuid(),
+  id: z.string().min(1),
   ticketNumber: z.string().min(1),
-  cashierId: z.string().uuid(),
+  cashierId: z.string().min(1),
   clientId: z.string().optional().nullable(),
   total: z.number().positive(),
   paymentMethod: z.string().min(1),
@@ -34,7 +35,7 @@ export const SyncSaleSchema = z.object({
 });
 
 export const SyncClientSchema = z.object({
-  id: z.string().uuid(),
+  id: z.string().min(1),
   name: z.string().min(1),
   email: z.string().email().optional().or(z.literal('')),
   phone: z.string().optional().or(z.literal('')),
@@ -42,22 +43,28 @@ export const SyncClientSchema = z.object({
 });
 
 export const SyncSupplierSchema = z.object({
-  id: z.string().uuid(),
+  id: z.string().min(1),
   companyName: z.string().min(1),
   contactName: z.string().optional().default(''),
   phone: z.string().optional().default(''),
+  rif: z.string().optional().default(''),
+  email: z.string().optional().default(''),
+  address: z.string().optional().default(''),
+  category: z.string().optional().default('General'),
+  paymentTerms: z.string().optional().default('Contado'),
+  status: z.string().optional().default('Activo'),
   updatedAt: z.string().datetime(),
 });
 
 export const SyncPurchaseItemSchema = z.object({
-  productId: z.string().uuid(),
-  quantity: z.number().int().positive(),
+  productId: z.string().min(1),
+  quantity: z.number().positive(),
   cost: z.number().positive(),
 });
 
 export const SyncPurchaseSchema = z.object({
-  id: z.string().uuid(),
-  supplierId: z.string().uuid(),
+  id: z.string().min(1),
+  supplierId: z.string().min(1),
   invoiceNumber: z.string().optional(),
   total: z.number().positive(),
   items: z.array(SyncPurchaseItemSchema).min(1),
@@ -67,8 +74,8 @@ export const SyncPurchaseSchema = z.object({
 });
 
 export const SyncPayrollSchema = z.object({
-  id: z.string().uuid(),
-  employeeId: z.string().uuid(),
+  id: z.string().min(1),
+  employeeId: z.string().min(1),
   baseSalary: z.number().positive(),
   hoursWorked: z.number().int().min(0).optional().default(0),
   bonuses: z.number().min(0).optional().default(0),
@@ -84,3 +91,4 @@ export const SyncPayrollSchema = z.object({
 export const SyncPullSchema = z.object({
   lastSyncedAt: z.string().datetime({ message: 'Se requiere una fecha ISO válida (lastSyncedAt).' }),
 });
+

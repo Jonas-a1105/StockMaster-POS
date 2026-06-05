@@ -15,10 +15,21 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     if (exception instanceof HttpException) {
       status = exception.getStatus();
       const res = exception.getResponse();
-      message = typeof res === 'string' ? res : (res as any).message || message;
+      const rawMessage = typeof res === 'string' ? res : (res as any).message || 'Error interno del servidor.';
+      if (status >= 500 && process.env.NODE_ENV === 'production') {
+        message = 'Ocurrió un error inesperado en el servidor.';
+      } else {
+        message = rawMessage;
+      }
+    } else {
+      if (process.env.NODE_ENV === 'production') {
+        message = 'Ocurrió un error inesperado en el servidor.';
+      } else {
+        message = exception instanceof Error ? exception.message : String(exception);
+      }
     }
 
-    this.logger.error(`[${status}] ${message}`, exception instanceof Error ? exception.stack : undefined);
+    this.logger.error(`[${status}] ${exception instanceof Error ? exception.message : String(exception)}`, exception instanceof Error ? exception.stack : undefined);
 
     response.status(status).send({
       success: false,

@@ -29,6 +29,8 @@ export class PayrollController {
     }
 
     const user = (req as any).user;
-    return this.payrollService.createPayroll(user.sub, result.data);
+    const ip = req.ip || 'unknown';
+    const ua = (req.headers['user-agent'] as string) || 'Unknown';
+    return this.payrollService.createPayroll(user.sub, result.data, ip, ua);
   }
 }

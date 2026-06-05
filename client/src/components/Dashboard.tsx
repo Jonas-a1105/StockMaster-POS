@@ -1,31 +1,34 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import { syncWorker, type SyncState } from '../db/sync';
 import { getDatabase } from '../db/database';
 import { AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
 import { useToast } from './ToastNotification';
-import VentasPOS from './VentasPOS';
-import Inventario from './Inventario';
-import Nomina from './Nomina';
-import Analiticas from './Analiticas';
-import Auditoria from './Auditoria';
-import Clientes from './Clientes';
-import Proveedores from './Proveedores';
-import Compras from './Compras';
-import CierreCaja from './CierreCaja';
-import BusinessSettings from './BusinessSettings';
+import { ErrorBoundary } from './ErrorBoundary';
 import Sidebar from './Sidebar';
 import Header from './Header';
 import ThemeCustomizer from './ThemeCustomizer';
 import RateCalculatorModal from './RateCalculatorModal';
 import KeyboardShortcuts from './KeyboardShortcuts';
+import AppUpdater, { type UpdateState } from './AppUpdater';
+
+const VentasPOS = lazy(() => import('./VentasPOS'));
+const Inventario = lazy(() => import('./Inventario'));
+const Nomina = lazy(() => import('./Nomina'));
+const Analiticas = lazy(() => import('./Analiticas'));
+const Auditoria = lazy(() => import('./Auditoria'));
+const Clientes = lazy(() => import('./Clientes'));
+const Proveedores = lazy(() => import('./Proveedores'));
+const Compras = lazy(() => import('./Compras'));
+const CierreCaja = lazy(() => import('./CierreCaja'));
+const BusinessSettings = lazy(() => import('./BusinessSettings'));
 
 // New high-fidelity visual sub-components
 import OverviewCards from './OverviewCards';
 import SalesChartCard from './SalesChartCard';
 import CalendarCard from './CalendarCard';
 import WeeklySalesCard from './WeeklySalesCard';
-import CustomerDetailsCard from './CustomerDetailsCard';
+import TopProductsCard from './TopProductsCard';
 import RightSidebar from './RightSidebar';
 
 interface DashboardProps {
@@ -44,11 +47,24 @@ export default function Dashboard({ user, onLogoutSuccess }: DashboardProps) {
   const { addToast } = useToast();
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [onlineStatus, setOnlineStatus] = useState(navigator.onLine);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'pos' | 'inventario' | 'compras' | 'nomina' | 'clientes' | 'proveedores' | 'analiticas' | 'auditoria' | 'cierre' | 'settings'>('dashboard');
+  const ALLOWED_TABS: Record<string, string[]> = {
+    ADMIN: ['dashboard', 'pos', 'inventario', 'compras', 'nomina', 'clientes', 'proveedores', 'cierre', 'analiticas', 'auditoria', 'settings'],
+    AUDITOR: ['dashboard', 'inventario', 'clientes', 'proveedores', 'analiticas', 'auditoria'],
+    CASHIER: ['pos', 'cierre']
+  };
+
+  const getDefaultTab = () => {
+    if (user.role === 'CASHIER') return 'pos';
+    return 'dashboard';
+  };
+
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'pos' | 'inventario' | 'compras' | 'nomina' | 'clientes' | 'proveedores' | 'analiticas' | 'auditoria' | 'cierre' | 'settings'>(getDefaultTab() as any);
   const [sidebarExpanded, setSidebarExpanded] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [isCalculatorOpen, setIsCalculatorOpen] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+  const [isUpdaterOpen, setIsUpdaterOpen] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState<UpdateState>('UPDATE_AVAILABLE'); // Simulate update is ready initially
   const prevSyncRef = useRef<SyncState | null>(null);
   const isManualSyncRef = useRef<boolean>(false);
 
@@ -69,6 +85,22 @@ export default function Dashboard({ user, onLogoutSuccess }: DashboardProps) {
   const [salesCount, setSalesCount] = useState(0);
   const [productsCount, setProductsCount] = useState(0);
   const [lowStockProducts, setLowStockProducts] = useState<Array<{ id: string; name: string; stock: number; minStock: number }>>([]);
+  // Guard access based on roles
+  const isAdminOrAuditor = user.role === 'ADMIN' || user.role === 'AUDITOR';
+  const isAdmin = user.role === 'ADMIN';
+
+  // Safeguard: Redirect if trying to access unauthorized tabs
+  useEffect(() => {
+    const allowed = ALLOWED_TABS[user.role] || [];
+    if (!allowed.includes(activeTab)) {
+      addToast({
+        type: 'error',
+        title: 'Acceso Denegado',
+        message: `Su rol (${user.role}) no tiene permisos para acceder a la sección de ${activeTab}.`
+      });
+      setActiveTab(getDefaultTab() as any);
+    }
+  }, [activeTab, user.role, addToast]);
 
   useEffect(() => {
     let salesSub: any;
@@ -210,6 +242,8 @@ export default function Dashboard({ user, onLogoutSuccess }: DashboardProps) {
             setActiveTab(tab);
             setSearchTerm(name);
           }}
+          updateStatus={updateStatus}
+          onOpenUpdater={() => setIsUpdaterOpen(true)}
         />
 
         {/* Sync Failure Warning Alert */}
@@ -242,62 +276,78 @@ export default function Dashboard({ user, onLogoutSuccess }: DashboardProps) {
 
         {/* Render modular panels inside the Dashboard grid */}
         <div style={{ padding: '0 0 24px 0', display: 'flex', flexDirection: 'column', gap: '24px' }}>
-          {activeTab === 'pos' ? (
-            <VentasPOS user={user} searchTerm={searchTerm} />
-          ) : activeTab === 'inventario' ? (
-            <Inventario searchTerm={searchTerm} />
-          ) : activeTab === 'compras' ? (
-            <Compras user={user} searchTerm={searchTerm} />
-          ) : activeTab === 'nomina' ? (
-            <Nomina user={user} searchTerm={searchTerm} />
-          ) : activeTab === 'clientes' ? (
-            <Clientes user={user} searchTerm={searchTerm} />
-          ) : activeTab === 'proveedores' ? (
-            <Proveedores user={user} searchTerm={searchTerm} />
-          ) : activeTab === 'analiticas' ? (
-            <Analiticas user={user} />
-          ) : activeTab === 'auditoria' ? (
-            <Auditoria user={user} />
-          ) : activeTab === 'cierre' ? (
-            <CierreCaja user={user} />
-          ) : activeTab === 'settings' ? (
-            <BusinessSettings user={user} />
-          ) : (
-            /* VISTA PRINCIPAL: RESUMEN DEL DASHBOARD (Dashboard Clone Style - 100% Identical to image) */
-            <div className="dashboard-grid animate-entrance">
-              
-              {/* Main Left Widgets Section */}
-              <div className="left-panel">
-                
-                {/* Spanish Page Title aligned with dashboard-clone */}
-                <h1 className="welcome-section">
-                  Hola, {user.name.split(' ')[0]}
-                </h1>
-
-                {/* B2: Alertas de Inventario Bajo removed */}
-
-                {/* Notched connected overview widgets */}
-                <OverviewCards totalRevenue={totalRevenue} salesCount={salesCount} productsCount={productsCount} />
-                
-                {/* Sales Line Graph and Calendar row */}
-                <div className="middle-row">
-                  <SalesChartCard isDarkMode={isDarkMode} />
-                  <CalendarCard />
-                </div>
-                
-                {/* Cylindrical capsules and Customer Invoices table row */}
-                <div className="bottom-row">
-                  <WeeklySalesCard />
-                  <CustomerDetailsCard searchTerm={searchTerm} />
-                </div>
-                
+          <ErrorBoundary>
+            <Suspense fallback={
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '300px', gap: '12px' }}>
+                <div style={{
+                  border: '4px solid var(--border-color)',
+                  borderTop: '4px solid var(--brand-primary)',
+                  borderRadius: '50%',
+                  width: '40px',
+                  height: '40px',
+                  animation: 'spin 1s linear infinite'
+                }} />
+                <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-secondary)' }}>Cargando sección...</span>
               </div>
+            }>
+              {activeTab === 'pos' ? (
+                <VentasPOS user={user} searchTerm={searchTerm} />
+              ) : activeTab === 'inventario' ? (
+                <Inventario searchTerm={searchTerm} user={user} />
+              ) : activeTab === 'compras' ? (
+                <Compras user={user} searchTerm={searchTerm} />
+              ) : activeTab === 'nomina' ? (
+                <Nomina user={user} searchTerm={searchTerm} />
+              ) : activeTab === 'clientes' ? (
+                <Clientes user={user} searchTerm={searchTerm} />
+              ) : activeTab === 'proveedores' ? (
+                <Proveedores user={user} searchTerm={searchTerm} />
+              ) : activeTab === 'analiticas' ? (
+                <Analiticas user={user} />
+              ) : activeTab === 'auditoria' ? (
+                <Auditoria user={user} />
+              ) : activeTab === 'cierre' ? (
+                <CierreCaja user={user} />
+              ) : activeTab === 'settings' ? (
+                <BusinessSettings user={user} onOpenUpdater={() => setIsUpdaterOpen(true)} />
+              ) : (
+                /* VISTA PRINCIPAL: RESUMEN DEL DASHBOARD (Dashboard Clone Style - 100% Identical to image) */
+                <div className="dashboard-grid animate-entrance">
+                  
+                  {/* Main Left Widgets Section */}
+                  <div className="left-panel">
+                    
+                    {/* Spanish Page Title aligned with dashboard-clone */}
+                    <h1 className="welcome-section">
+                      Hola, {user.name.split(' ')[0]}
+                    </h1>
 
-              {/* Narrow Right Statistics Column */}
-              <RightSidebar isDarkMode={isDarkMode} />
+                    {/* B2: Alertas de Inventario Bajo removed */}
 
-            </div>
-          )}
+                    {/* Notched connected overview widgets */}
+                    <OverviewCards totalRevenue={totalRevenue} salesCount={salesCount} productsCount={productsCount} setActiveTab={setActiveTab} />
+                    
+                    {/* Sales Line Graph and Calendar row */}
+                    <div className="middle-row">
+                      <SalesChartCard isDarkMode={isDarkMode} />
+                      <CalendarCard setActiveTab={setActiveTab} />
+                    </div>
+                    
+                    {/* Cylindrical capsules and Customer Invoices table row */}
+                    <div className="bottom-row">
+                      <WeeklySalesCard />
+                      <TopProductsCard />
+                    </div>
+                    
+                  </div>
+
+                  {/* Narrow Right Statistics Column */}
+                  <RightSidebar isDarkMode={isDarkMode} />
+
+                </div>
+              )}
+            </Suspense>
+          </ErrorBoundary>
         </div>
 
       </main>
@@ -321,6 +371,7 @@ export default function Dashboard({ user, onLogoutSuccess }: DashboardProps) {
           const searchInput = document.querySelector('.search-input') as HTMLInputElement;
           if (searchInput) searchInput.focus();
         }}
+        role={user.role}
       />
       {/* MODAL: CONFIRMACIÓN DE LOGOUT (GLASSMORPHISM) */}
       {showLogoutConfirm && (
@@ -381,6 +432,12 @@ export default function Dashboard({ user, onLogoutSuccess }: DashboardProps) {
 
         </div>
       )}
+      {/* App software update manager */}
+      <AppUpdater 
+        isOpen={isUpdaterOpen} 
+        onClose={() => setIsUpdaterOpen(false)} 
+        onCheckStatus={(status) => setUpdateStatus(status)}
+      />
     </div>
   );
 }

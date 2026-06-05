@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">StockMasterPro</string>
+    <string name="title_activity_main">StockMasterPro</string>
+    <string name="package_name">com.stockmasterpro.pos</string>
+    <string name="custom_url_scheme">com.stockmasterpro.pos</string>
+</resources>

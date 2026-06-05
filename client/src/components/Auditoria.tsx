@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { animate } from 'animejs';
 import { 
   ShieldAlert, 
   Search, 
@@ -12,9 +13,12 @@ import {
   X,
   Server,
   Wifi,
-  ArrowRight
+  ArrowRight,
+  Info
 } from 'lucide-react';
 import { API_URL } from '../config';
+import { getDatabase } from '../db/database';
+import { formatAuditDetailsHumanReadable } from '../utils/audit';
 
 interface AuditoriaProps {
   user: {
@@ -40,114 +44,133 @@ interface AuditLog {
 }
 
 export default function Auditoria({ user }: AuditoriaProps) {
+  // Mobile detection for full-height modal layout
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth <= 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [filteredLogs, setFilteredLogs] = useState<AuditLog[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<'TODOS' | 'SYNC' | 'AUTH' | 'POS' | 'STOCK'>('TODOS');
+
+  const ITEMS_PER_PAGE = 10;
+  const [currentPage, setCurrentPage] = useState(1);
+
+  // Reset pagination on filter change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, categoryFilter]);
+
+  const totalPages = Math.ceil(filteredLogs.length / ITEMS_PER_PAGE);
+  const paginatedLogs = filteredLogs.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
   const [selectedLog, setSelectedLog] = useState<AuditLog | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
 
-  // Terminal state for live developer logging simulation
-  const [terminalLogs, setTerminalLogs] = useState<string[]>([]);
-  const [isTerminalPaused, setIsTerminalPaused] = useState(false);
+  const [localDbInfo, setLocalDbInfo] = useState({
+    status: 'Conectando...',
+    collectionsCount: 8,
+    writeLatency: 'Calculando...',
+    totalRecords: 0
+  });
 
-  const getMockLogs = () => {
-    return [
-      {
-        id: 'log_01',
-        action: 'USUARIO_LOGIN_LOCAL',
-        details: JSON.stringify({ 
-          email: user.email, 
-          status: 'SUCCESS', 
-          sessionToken: 'jwt_local_' + Math.random().toString(36).substring(7),
-          authMethod: 'OAuth-Token-PWA' 
-        }, null, 2),
-        ipAddress: '192.168.1.14',
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) RxDB-PWA-Client',
-        createdAt: new Date().toISOString(),
-        user: { name: user.name, email: user.email, role: user.role }
-      },
-      {
-        id: 'log_02',
-        action: 'SYNC_PRODUCT_CONFLICT_LWW',
-        details: JSON.stringify({ 
-          productId: 'prod_98a', 
-          field: 'stock', 
-          localValue: 12, 
-          remoteValue: 15, 
-          resolution: 'Last-Write-Wins (LWW) aplicada.', 
-          conflictVersion: 4 
-        }, null, 2),
-        ipAddress: '127.0.0.1',
-        userAgent: 'RxDB CouchDB Replicator Node',
-        createdAt: new Date(Date.now() - 45000).toISOString(),
-        user: { name: 'Sistema (Sync)', email: 'sync@stockmaster.pro', role: 'SYSTEM' }
-      },
-      {
-        id: 'log_03',
-        action: 'PAGO_REGISTRO_POS',
-        details: JSON.stringify({ 
-          ticketNumber: 'TK-884210', 
-          paymentMethod: 'EFECTIVO', 
-          subtotal: 120.00, 
-          total: 139.20, 
-          salesItemsCount: 4 
-        }, null, 2),
-        ipAddress: '192.168.1.14',
-        userAgent: 'StockMasterPro POS PWA v2.4',
-        createdAt: new Date(Date.now() - 120000).toISOString(),
-        user: { name: user.name, email: user.email, role: user.role }
-      },
-      {
-        id: 'log_04',
-        action: 'STOCK_ALERTA_CRITICA',
-        details: JSON.stringify({ 
-          productId: 'p2', 
-          productName: 'Harina de Trigo Panificable', 
-          currentStock: 1, 
-          minStock: 5, 
-          status: 'Restock requerido de inmediato.' 
-        }, null, 2),
-        ipAddress: '127.0.0.1',
-        userAgent: 'Automated Stock Auditor',
-        createdAt: new Date(Date.now() - 360000).toISOString(),
-        user: { name: 'Servicio de Stock', email: 'stock-monitor@stockmaster.pro', role: 'SYSTEM' }
-      },
-      {
-        id: 'log_05',
-        action: 'USUARIO_SESION_EXPIRADA',
-        details: JSON.stringify({ 
-          email: 'cajero_test@stockmaster.pro', 
-          reason: 'Token de sesión caducado en backend.', 
-          lastActiveAt: new Date(Date.now() - 3600000).toISOString() 
-        }, null, 2),
-        ipAddress: '192.168.1.20',
-        userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4)',
-        createdAt: new Date(Date.now() - 3600000).toISOString(),
-        user: { name: 'Juan Pérez', email: 'cajero_test@stockmaster.pro', role: 'CASHIER' }
-      },
-      {
-        id: 'log_06',
-        action: 'INVENTARIO_SOBREESCRITURA',
-        details: JSON.stringify({ 
-          productId: 'prod_44b', 
-          productName: 'Leche Deslactosada 1L', 
-          previousStock: 4, 
-          newStock: 25, 
-          reason: 'Ajuste manual por OCR de factura de compra.', 
-          invoiceAttached: 'FACT-2026-991' 
-        }, null, 2),
-        ipAddress: '192.168.1.14',
-        userAgent: 'InvoiceOCR Extractor Tool',
-        createdAt: new Date(Date.now() - 7200000).toISOString(),
-        user: { name: user.name, email: user.email, role: user.role }
+  const [remoteServerInfo, setRemoteServerInfo] = useState({
+    status: 'Verificando...',
+    ping: 'Calculando...',
+    isOnline: false
+  });
+
+  const fetchRealDatabaseMetrics = async () => {
+    try {
+      const db = await getDatabase();
+      
+      // Medir latencia de lectura de IndexedDB
+      const testStart = performance.now();
+      await db.products.find().exec();
+      const readLatency = (performance.now() - testStart).toFixed(1) + ' ms';
+
+      // Contar registros locales reales en IndexedDB de RxDB
+      const collections = [
+        db.users,
+        db.products,
+        db.sales,
+        db.clients,
+        db.suppliers,
+        db.purchases,
+        db.payroll,
+        db.auditLogs
+      ];
+      
+      let sum = 0;
+      for (const col of collections) {
+        if (col) {
+          const docs = await col.find().exec();
+          sum += docs.length;
+        }
       }
-    ];
+
+      setLocalDbInfo({
+        status: 'Online/Ready',
+        collectionsCount: Object.keys(db.collections).length || 8,
+        writeLatency: readLatency,
+        totalRecords: sum
+      });
+
+    } catch (error) {
+      console.error('Error fetching RxDB metrics:', error);
+      setLocalDbInfo(prev => ({
+        ...prev,
+        status: 'Error en Caché',
+        writeLatency: 'Error'
+      }));
+    }
+
+    // Ping remoto real al backend de NestJS
+    try {
+      const pingStart = performance.now();
+      const token = localStorage.getItem('auth_token');
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3000); // 3 segundos de timeout
+      
+      const pingRes = await fetch(`${API_URL}/reports/kpis`, {
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+      
+      const pingEnd = performance.now();
+      const duration = Math.round(pingEnd - pingStart);
+
+      if (pingRes.ok || pingRes.status === 401 || pingRes.status === 403) {
+        setRemoteServerInfo({
+          status: 'Activo',
+          ping: `${duration} ms`,
+          isOnline: true
+        });
+      } else {
+        setRemoteServerInfo({
+          status: 'Error Respuesta',
+          ping: 'N/A',
+          isOnline: false
+        });
+      }
+    } catch (error) {
+      console.error('Error pinging server:', error);
+      setRemoteServerInfo({
+        status: 'Desconectado',
+        ping: 'Desconectado',
+        isOnline: false
+      });
+    }
   };
 
   const loadAuditLogs = async () => {
     setIsRefreshing(true);
+    fetchRealDatabaseMetrics();
     try {
       let serverLogs: AuditLog[] = [];
       const token = localStorage.getItem('auth_token');
@@ -157,31 +180,66 @@ export default function Auditoria({ user }: AuditoriaProps) {
         });
         if (logsRes.ok) {
           serverLogs = await logsRes.json();
-        } else {
-          serverLogs = getMockLogs();
         }
-      } else {
-        serverLogs = getMockLogs();
       }
 
-      // Read local logs
-      const savedLocal = localStorage.getItem('stockmaster_local_audit_logs');
-      const localLogs: AuditLog[] = savedLocal ? JSON.parse(savedLocal) : [];
+      // Read local logs from RxDB
+      let localUser = { name: 'Usuario Local', email: 'local@stockmaster.pro', role: 'CASHIER' };
+      try {
+        const userStr = localStorage.getItem('auth_user');
+        if (userStr) {
+          const u = JSON.parse(userStr);
+          localUser = { name: u.name || 'Usuario Local', email: u.email || 'local@stockmaster.pro', role: u.role || 'CASHIER' };
+        }
+      } catch {}
+
+      const db = await getDatabase();
+      const localLogsDocs = await db.auditLogs.find().exec();
+      const localLogs: AuditLog[] = localLogsDocs.map(doc => {
+        const data = doc.toJSON();
+        return {
+          id: data.id,
+          action: data.action,
+          details: data.details || '{}',
+          ipAddress: '127.0.0.1 (Local)',
+          userAgent: 'RxDB Client (Local)',
+          createdAt: data.createdAt,
+          user: localUser
+        };
+      });
 
       const combined = [...localLogs, ...serverLogs].sort((a, b) => 
         new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
       );
       setAuditLogs(combined);
     } catch (err) {
-      console.error('Error al conectar con la bitácora de auditoría:', err);
-      const serverLogs = getMockLogs();
-      const savedLocal = localStorage.getItem('stockmaster_local_audit_logs');
-      const localLogs: AuditLog[] = savedLocal ? JSON.parse(savedLocal) : [];
-
-      const combined = [...localLogs, ...serverLogs].sort((a, b) => 
-        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-      );
-      setAuditLogs(combined);
+      console.error('Error al conectar con la bitácora de auditoría. Mostrando solo logs locales:', err);
+      let localLogs: AuditLog[] = [];
+      try {
+        let localUser = { name: 'Usuario Local', email: 'local@stockmaster.pro', role: 'CASHIER' };
+        const userStr = localStorage.getItem('auth_user');
+        if (userStr) {
+          const u = JSON.parse(userStr);
+          localUser = { name: u.name || 'Usuario Local', email: u.email || 'local@stockmaster.pro', role: u.role || 'CASHIER' };
+        }
+        const db = await getDatabase();
+        const localLogsDocs = await db.auditLogs.find().exec();
+        localLogs = localLogsDocs.map(doc => {
+          const data = doc.toJSON();
+          return {
+            id: data.id,
+            action: data.action,
+            details: data.details || '{}',
+            ipAddress: '127.0.0.1 (Local)',
+            userAgent: 'RxDB Client (Local)',
+            createdAt: data.createdAt,
+            user: localUser
+          };
+        });
+      } catch (dbErr) {
+        console.error('Error reading local audit logs from RxDB:', dbErr);
+      }
+      setAuditLogs(localLogs);
     } finally {
       setTimeout(() => setIsRefreshing(false), 500);
     }
@@ -189,41 +247,31 @@ export default function Auditoria({ user }: AuditoriaProps) {
 
   useEffect(() => {
     loadAuditLogs();
-    
-    // Seed initial terminal logs
-    setTerminalLogs([
-      `[${new Date().toLocaleTimeString()}] INFO  [RxDB]: local SQLite dev.db cache initialized (RxDB v15.0.3)`,
-      `[${new Date(Date.now()-20000).toLocaleTimeString()}] INFO  [Schema]: 6 offline-first collections mapping successful.`,
-      `[${new Date(Date.now()-15000).toLocaleTimeString()}] AUTH  [NestJS]: active JSON Web Token validated. SSL connection healthy.`,
-      `[${new Date(Date.now()-12000).toLocaleTimeString()}] SYNC  [Replicator]: starting dynamic synchronization stream...`,
-      `[${new Date(Date.now()-8000).toLocaleTimeString()}] SYNC  [Replicator]: local records synced. Latency: 12ms.`
-    ]);
   }, []);
 
-  // Terminal active logger simulation
+  // Animación del replicador con Anime.js
   useEffect(() => {
-    if (isTerminalPaused) return;
+    const arrowAnim = animate('.sync-flow-arrow', {
+      left: ['-14px', '134px'], // fluye a través del contenedor de 134px
+      opacity: [0, 1, 1, 0],
+      duration: 2000,
+      loop: true,
+      ease: 'linear'
+    });
 
-    const interval = setInterval(() => {
-      const dbActions = [
-        { label: 'INFO  [RxDB]', color: 'cyan', text: 'Queried collection "products" for reactive UI update.' },
-        { label: 'SYNC  [Replicator]', color: 'teal', text: 'Checked local sync queue: 0 pending transactions.' },
-        { label: 'PRISMA [Server]', color: 'gold', text: 'Heartbeat ping sent to PostgreSQL backend Central.' },
-        { label: 'SYNC  [RxDB]', color: 'cyan', text: 'Resolved conflict revision check for collection "sales".' }
-      ];
+    const wifiAnim = animate('.sync-flow-wifi', {
+      scale: [1, 1.2, 1],
+      opacity: [0.6, 1, 0.6],
+      duration: 1500,
+      loop: true,
+      ease: 'inOutSine'
+    });
 
-      const chosen = dbActions[Math.floor(Math.random() * dbActions.length)];
-      const logLine = `[${new Date().toLocaleTimeString()}] ${chosen.label}: ${chosen.text}`;
-      
-      setTerminalLogs(prev => {
-        const next = [...prev, logLine];
-        if (next.length > 25) next.shift(); // Cap terminal history
-        return next;
-      });
-    }, 4500);
-
-    return () => clearInterval(interval);
-  }, [isTerminalPaused]);
+    return () => {
+      arrowAnim.pause();
+      wifiAnim.pause();
+    };
+  }, []);
 
   // Reactive audit filter
   useEffect(() => {
@@ -270,13 +318,23 @@ export default function Auditoria({ user }: AuditoriaProps) {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', width: '100%', paddingBottom: '30px' }}>
-      
-      {/* SECCIÓN 1: PANEL DE ARQUITECTURA DE CONEXIÓN Y BASE DE DATOS */}
-      <div className="widget" style={{ padding: '24px', borderRadius: 'var(--card-radius)' }}>
-        <h3 style={{ fontSize: '15px', fontWeight: 800, color: 'var(--text-primary)', margin: '0 0 16px 0', fontFamily: 'var(--font-main)' }}>
-          💻 Arquitectura de Datos y Centro de Replicación
-        </h3>
+    <div className="view-container-layout" style={{ display: 'flex', flexDirection: 'column', gap: '24px', width: '100%', paddingBottom: '30px' }}>
+        {/* SECCIÓN 1: PANEL DE ARQUITECTURA DE CONEXIÓN Y BASE DE DATOS */}
+      <div className="view-header-widget has-grid-content" style={{ width: '100%' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '16px' }}>
+          <div className="info-tooltip-wrapper">
+            <Info size={18} className="info-tooltip-icon" style={{ color: 'var(--text-secondary)', cursor: 'help', opacity: 0.8 }} />
+            <span className="tooltip-text">
+              Monitoreo en tiempo real de la replicación de datos, terminal de comandos y registro detallado de eventos de seguridad.
+            </span>
+          </div>
+          <span className="view-header-pill pill-teal">
+            {auditLogs.length} Eventos
+          </span>
+          <h3 style={{ fontSize: '15px', fontWeight: 800, color: 'var(--text-primary)', margin: 0, fontFamily: 'var(--font-main)', marginLeft: '4px' }}>
+            💻 Arquitectura de Datos y Centro de Replicación
+          </h3>
+        </div>
         
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '20px', flexWrap: 'wrap' }}>
           
@@ -284,11 +342,12 @@ export default function Auditoria({ user }: AuditoriaProps) {
           <div style={{ 
             flex: 1, 
             minWidth: '220px', 
-            backgroundColor: 'var(--bg-primary)', 
+            backgroundColor: 'var(--bg-card)', 
             border: '1.5px solid var(--border-color)', 
             borderRadius: '16px', 
             padding: '16px',
-            position: 'relative'
+            position: 'relative',
+            boxShadow: '0 8px 30px rgba(0,0,0,0.15)'
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
               <span style={{ fontSize: '11px', fontWeight: 800, color: 'var(--text-secondary)' }}>BASE DE DATOS LOCAL</span>
@@ -297,122 +356,96 @@ export default function Auditoria({ user }: AuditoriaProps) {
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
               <Database size={24} style={{ color: 'var(--brand-primary)' }} />
               <div>
-                <strong style={{ fontSize: '14px', display: 'block', color: 'var(--text-primary)' }}>RxDB (SQLite Cache)</strong>
-                <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>6 colecciones. Estado: Online/Ready</span>
+                <strong style={{ fontSize: '14px', display: 'block', color: 'var(--text-primary)' }}>RxDB (IndexedDB Cache)</strong>
+                <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{localDbInfo.collectionsCount} colecciones. Estado: {localDbInfo.status}</span>
               </div>
             </div>
             <div style={{ borderTop: '1px solid var(--border-color)', marginTop: '12px', paddingTop: '8px', display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: 'var(--text-muted)' }}>
-              <span>Latencia Escritura: <strong>4ms</strong></span>
-              <span>Registros locales: <strong>{auditLogs.length + 15}</strong></span>
+              <span>Latencia Lectura: <strong>{localDbInfo.writeLatency}</strong></span>
+              <span>Registros locales: <strong>{localDbInfo.totalRecords}</strong></span>
             </div>
           </div>
 
           {/* Enlace de Replicación */}
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--brand-primary)', fontWeight: 800, fontSize: '10.5px' }}>
-              <Wifi size={14} className="pulse" />
-              <span>WebSockets Replicator</span>
+              <Wifi size={14} className="sync-flow-wifi" style={{ transformOrigin: 'center' }} />
+              <span>Replicador REST API</span>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', color: 'var(--border-color)' }}>
-              <div style={{ width: '60px', height: '2px', backgroundColor: 'var(--border-color)' }} />
-              <ArrowRight size={14} style={{ color: 'var(--brand-primary)' }} />
-              <div style={{ width: '60px', height: '2px', backgroundColor: 'var(--border-color)' }} />
+            
+            {/* Contenedor de la línea con flujo animado de anime.js */}
+            <div 
+              className="sync-flow-line-container"
+              style={{ 
+                display: 'flex', 
+                alignItems: 'center', 
+                justifyContent: 'center',
+                position: 'relative', 
+                width: '134px', // 60px + 14px + 60px
+                height: '14px',
+                overflow: 'hidden'
+              }}
+            >
+              {/* Línea horizontal de fondo */}
+              <div style={{ position: 'absolute', left: 0, right: 0, height: '2px', backgroundColor: 'var(--border-color)' }} />
+              
+              {/* Flecha que viaja con anime.js */}
+              <div 
+                className="sync-flow-arrow"
+                style={{ 
+                  position: 'absolute', 
+                  left: '-14px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  opacity: 0
+                }}
+              >
+                <ArrowRight size={14} style={{ color: 'var(--brand-primary)' }} />
+              </div>
             </div>
-            <span style={{ fontSize: '9px', color: 'var(--text-muted)', fontWeight: 700 }}>Protocolo SSL Activo</span>
+            
+            <span style={{ fontSize: '9px', color: 'var(--text-muted)', fontWeight: 700 }}>Conexión HTTPS Activa</span>
           </div>
 
           {/* Nodo Remoto NestJS / Postgres */}
           <div style={{ 
             flex: 1, 
             minWidth: '220px', 
-            backgroundColor: 'var(--bg-primary)', 
+            backgroundColor: 'var(--bg-card)', 
             border: '1.5px solid var(--border-color)', 
             borderRadius: '16px', 
-            padding: '16px'
+            padding: '16px',
+            boxShadow: '0 8px 30px rgba(0,0,0,0.15)'
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
               <span style={{ fontSize: '11px', fontWeight: 800, color: 'var(--text-secondary)' }}>SERVIDOR CENTRAL DE DATOS</span>
-              <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#22c55e', boxShadow: '0 0 8px #22c55e', display: 'inline-block' }} />
+              <span style={{ 
+                width: '8px', 
+                height: '8px', 
+                borderRadius: '50%', 
+                backgroundColor: remoteServerInfo.isOnline ? '#22c55e' : '#ef4444', 
+                boxShadow: remoteServerInfo.isOnline ? '0 0 8px #22c55e' : '0 0 8px #ef4444', 
+                display: 'inline-block' 
+              }} />
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
               <Server size={24} style={{ color: 'var(--brand-gold)' }} />
               <div>
                 <strong style={{ fontSize: '14px', display: 'block', color: 'var(--text-primary)' }}>NestJS + PostgreSQL</strong>
-                <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{API_URL}. Activo</span>
+                <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{API_URL.replace(/https?:\/\//, '')}. {remoteServerInfo.status}</span>
               </div>
             </div>
             <div style={{ borderTop: '1px solid var(--border-color)', marginTop: '12px', paddingTop: '8px', display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: 'var(--text-muted)' }}>
-              <span>Ping Remoto: <strong>12ms</strong></span>
-              <span>SSL SHA-256: <strong>Válido</strong></span>
+              <span>Ping Remoto: <strong>{remoteServerInfo.ping}</strong></span>
+              <span>Conexión: <strong>{remoteServerInfo.isOnline ? 'Online' : 'Offline'}</strong></span>
             </div>
           </div>
 
-        </div>
-      </div>
-
-      {/* SECCIÓN 2: TERMINAL EN VIVO DE BASE DE DATOS (DEVELOPER TAIL STREAM) */}
-      <div className="widget" style={{ padding: '20px 24px', borderRadius: 'var(--card-radius)', display: 'flex', flexDirection: 'column', gap: '12px', backgroundColor: '#0b0c10', border: '1.5px solid #1f2833' }}>
-        
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #1f2833', paddingBottom: '10px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Terminal size={16} style={{ color: '#45f3ff' }} />
-            <span style={{ color: '#45f3ff', fontFamily: 'Consolas, monospace', fontSize: '12.5px', fontWeight: 'bold' }}>
-              system_live_db_stream.sh (~/stockmaster/logs)
-            </span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <button
-              onClick={() => setIsTerminalPaused(!isTerminalPaused)}
-              style={{
-                backgroundColor: isTerminalPaused ? '#22c55e' : '#ef4444',
-                color: '#fff',
-                border: 'none',
-                padding: '4px 10px',
-                borderRadius: '6px',
-                fontSize: '10px',
-                fontFamily: 'monospace',
-                fontWeight: 'bold',
-                cursor: 'pointer'
-              }}
-            >
-              {isTerminalPaused ? 'RESUME STREAM' : 'PAUSE STREAM'}
-            </button>
-            <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: isTerminalPaused ? 'var(--text-secondary)' : '#45f3ff', boxShadow: isTerminalPaused ? 'none' : '0 0 6px #45f3ff' }} />
-          </div>
-        </div>
-
-        {/* Bloque Terminal */}
-        <div style={{ 
-          backgroundColor: '#050508', 
-          borderRadius: '12px', 
-          padding: '16px', 
-          maxHeight: '160px', 
-          overflowY: 'auto',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '6px',
-          fontFamily: 'Consolas, Monaco, "Courier New", monospace',
-          fontSize: '11px',
-          lineHeight: '1.4'
-        }}>
-          {terminalLogs.map((log, idx) => {
-            let textColor = '#c5c6c7';
-            if (log.includes('INFO')) textColor = '#45f3ff';
-            if (log.includes('AUTH')) textColor = '#22c55e';
-            if (log.includes('SYNC')) textColor = '#ffc045';
-            if (log.includes('PRISMA')) textColor = '#fb5bfa';
-
-            return (
-              <div key={idx} style={{ color: textColor }}>
-                {log}
-              </div>
-            );
-          })}
         </div>
       </div>
 
       {/* SECCIÓN 3: BUSCADOR Y CHIPS DE FILTRADO TÉCNICO */}
-      <div className="widget" style={{ padding: '20px', borderRadius: 'var(--card-radius)' }}>
+      <div style={{ width: '100%' }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '16px' }}>
           
           {/* Controles de Búsqueda */}
@@ -484,7 +517,7 @@ export default function Auditoria({ user }: AuditoriaProps) {
       </div>
 
       {/* SECCIÓN 4: TABLA DE EVENTOS DE AUDITORÍA */}
-      <div className="widget" style={{ padding: '24px', borderRadius: 'var(--card-radius)', flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <div className="widget view-content-widget" style={{ padding: '24px', borderRadius: 'var(--card-radius)', flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px' }}>
           <h3 style={{ fontSize: '15px', fontWeight: 800, color: 'var(--text-primary)', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -516,7 +549,7 @@ export default function Auditoria({ user }: AuditoriaProps) {
                   </td>
                 </tr>
               ) : (
-                filteredLogs.map((log) => {
+                paginatedLogs.map((log) => {
                   let badgeBg = 'rgba(14, 165, 164, 0.1)';
                   let badgeColor = 'var(--brand-primary)';
                   if (log.action.startsWith('SYNC_')) {
@@ -543,18 +576,24 @@ export default function Auditoria({ user }: AuditoriaProps) {
                         })}
                       </td>
                       <td style={{ padding: '12px 8px' }}>
-                        <span style={{ 
-                          fontSize: '10px', 
-                          fontWeight: 800, 
-                          color: badgeColor, 
-                          backgroundColor: badgeBg, 
-                          padding: '3px 8px', 
-                          borderRadius: '50px',
-                          display: 'inline-block',
-                          letterSpacing: '0.3px'
-                        }}>
-                          {log.action}
-                        </span>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                          <span style={{ 
+                            fontSize: '10px', 
+                            fontWeight: 800, 
+                            color: badgeColor, 
+                            backgroundColor: badgeBg, 
+                            padding: '3px 8px', 
+                            borderRadius: '50px',
+                            display: 'inline-block',
+                            letterSpacing: '0.3px',
+                            width: 'fit-content'
+                          }}>
+                            {log.action}
+                          </span>
+                          <span style={{ fontSize: '12px', color: 'var(--text-primary)', fontWeight: 600 }}>
+                            {formatAuditDetailsHumanReadable(log)}
+                          </span>
+                        </div>
                       </td>
                       <td style={{ padding: '12px 8px' }}>
                         <div style={{ display: 'flex', flexDirection: 'column' }}>
@@ -599,11 +638,44 @@ export default function Auditoria({ user }: AuditoriaProps) {
           </table>
         </div>
 
+        {/* Pagination Controls */}
+        {totalPages > 1 && (
+          <div style={{
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            gap: '12px',
+            padding: '16px 0 4px 0',
+            borderTop: '1px solid var(--border-color)',
+            marginTop: '12px'
+          }}>
+            <button
+              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+              disabled={currentPage === 1}
+              className="btn-pill-dark"
+              style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '11.5px', fontWeight: 700, cursor: currentPage === 1 ? 'not-allowed' : 'pointer', opacity: currentPage === 1 ? 0.4 : 1 }}
+            >
+              ← Anterior
+            </button>
+            <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-secondary)', fontFamily: 'var(--font-main)' }}>
+              Página {currentPage} de {totalPages}
+            </span>
+            <button
+              onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+              disabled={currentPage === totalPages}
+              className="btn-pill-dark"
+              style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '11.5px', fontWeight: 700, cursor: currentPage === totalPages ? 'not-allowed' : 'pointer', opacity: currentPage === totalPages ? 0.4 : 1 }}
+            >
+              Siguiente →
+            </button>
+          </div>
+        )}
+
       </div>
 
       {/* DETALLES DIALOG: INSPECTOR DE METADATOS JSON */}
       {selectedLog && (
-        <div style={{
+        <div className="modal-registration-backdrop" style={{
           position: 'fixed',
           top: 0,
           left: 0,
@@ -612,25 +684,27 @@ export default function Auditoria({ user }: AuditoriaProps) {
           backgroundColor: 'rgba(0, 0, 0, 0.65)',
           backdropFilter: 'blur(8px)',
           display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          zIndex: 1000,
-          padding: '20px'
-        }}>
+          justifyContent: isMobile ? 'flex-start' : 'center',
+          alignItems: isMobile ? 'stretch' : 'center',
+          flexDirection: isMobile ? 'column' : 'row',
+          zIndex: 1500,
+          padding: isMobile ? 0 : '20px'
+        }} onClick={() => setSelectedLog(null)}>
           
-          <div className="widget" style={{
+          <div className={`widget ${!isMobile ? 'animate-entrance' : ''} modal-registration-content`} style={{
             width: '100%',
-            maxWidth: '640px',
+            maxWidth: isMobile ? '100%' : '640px',
+            padding: 0,
             backgroundColor: 'var(--bg-card)',
-            borderRadius: 'var(--card-radius)',
-            border: '1.5px solid var(--border-color)',
-            boxShadow: '0 20px 50px rgba(0, 0, 0, 0.4)',
+            borderRadius: isMobile ? 0 : 'var(--card-radius)',
+            border: isMobile ? 'none' : '1.5px solid var(--border-color)',
+            boxShadow: isMobile ? 'none' : '0 20px 50px rgba(0, 0, 0, 0.4)',
             overflow: 'hidden',
             display: 'flex',
             flexDirection: 'column',
-            maxHeight: '85vh',
-            animation: 'entrance 0.2s cubic-bezier(0.16, 1, 0.3, 1)'
-          }}>
+            height: isMobile ? '100dvh' : 'auto',
+            maxHeight: isMobile ? '100dvh' : '90vh'
+          }} onClick={(e) => e.stopPropagation()}>
             
             {/* Modal Header */}
             <div style={{ 
@@ -657,7 +731,7 @@ export default function Auditoria({ user }: AuditoriaProps) {
             </div>
 
             {/* Modal Body */}
-            <div style={{ padding: '24px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <div style={{ padding: '24px', paddingBottom: isMobile ? '90px' : '24px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '16px', flex: 1 }}>
               
               {/* Información General del Log */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px', fontSize: '12px', backgroundColor: 'var(--bg-input)', padding: '14px', borderRadius: '16px', border: '1px solid var(--border-color)' }}>
@@ -676,6 +750,41 @@ export default function Auditoria({ user }: AuditoriaProps) {
                 <div style={{ marginTop: '6px' }}>
                   <span style={{ color: 'var(--text-secondary)', fontWeight: 800, display: 'block' }}>Timestamp Completo:</span>
                   <span style={{ color: 'var(--text-primary)' }}>{new Date(selectedLog.createdAt).toLocaleString('es-ES')}</span>
+                </div>
+              </div>
+
+              {/* Resumen de Actividad en Español */}
+              <div style={{ 
+                backgroundColor: 'rgba(14, 165, 164, 0.08)', 
+                border: '1.5px solid var(--brand-primary)', 
+                borderRadius: '16px', 
+                padding: '16px',
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: '12px'
+              }}>
+                <div style={{ 
+                  backgroundColor: 'var(--brand-primary)', 
+                  color: '#fff', 
+                  borderRadius: '50%', 
+                  width: '28px', 
+                  height: '28px', 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'center',
+                  flexShrink: 0,
+                  fontSize: '14px',
+                  fontWeight: 'bold'
+                }}>
+                  i
+                </div>
+                <div>
+                  <span style={{ fontSize: '11px', fontWeight: 800, color: 'var(--brand-primary)', display: 'block', marginBottom: '2px', letterSpacing: '0.5px' }}>
+                    RESUMEN DE ACTIVIDAD (LECTURA HUMANA)
+                  </span>
+                  <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-primary)', fontWeight: 600, lineHeight: '1.4' }}>
+                    {formatAuditDetailsHumanReadable(selectedLog)}
+                  </p>
                 </div>
               </div>
 
@@ -739,7 +848,8 @@ export default function Auditoria({ user }: AuditoriaProps) {
               borderTop: '1.5px solid var(--border-color)', 
               display: 'flex', 
               justifyContent: 'flex-end',
-              backgroundColor: 'var(--bg-input)'
+              backgroundColor: 'var(--bg-input)',
+              ...(isMobile ? { position: 'fixed' as const, bottom: 0, left: 0, right: 0, zIndex: 10 } : {})
             }}>
               <button
                 onClick={() => setSelectedLog(null)}

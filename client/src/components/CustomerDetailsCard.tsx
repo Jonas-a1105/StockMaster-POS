@@ -56,22 +56,21 @@ export default function CustomerDetailsCard({ searchTerm }: CustomerDetailsCardP
     );
   });
 
+  const ITEMS_PER_PAGE = 5;
+  const [currentPage, setCurrentPage] = useState(1);
+
+  // Reset pagination on search change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm]);
+
+  const totalPages = Math.ceil(filteredData.length / ITEMS_PER_PAGE);
+  const paginatedData = filteredData.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
+
   return (
     <div className="widget" style={{ flexGrow: 1 }}>
       <div className="widget-header">
         <h3 className="widget-title">Detalles del Cliente</h3>
-        
-        <div style={{ display: 'flex', gap: '10px' }}>
-          <button className="btn-pill-dark" onClick={() => alert('Filtros avanzados de facturas activos')}>
-            <SlidersHorizontal size={14} />
-            <span>Filtrar</span>
-          </button>
-          
-          <button className="btn-yellow" onClick={() => alert('¡Descargando reporte de transacciones de clientes!')}>
-            <Download size={14} />
-            <span>Descargar</span>
-          </button>
-        </div>
       </div>
       
       <div className="details-table-wrapper">
@@ -86,8 +85,8 @@ export default function CustomerDetailsCard({ searchTerm }: CustomerDetailsCardP
             </tr>
           </thead>
           <tbody>
-            {filteredData.length > 0 ? (
-              filteredData.map((row, idx) => (
+            {paginatedData.length > 0 ? (
+              paginatedData.map((row, idx) => (
                 <tr key={idx} style={{ animation: 'fadeIn 0.3s ease' }}>
                   <td className="row-id">{row.id}</td>
                   <td style={{ fontWeight: '700' }}>{row.customer}</td>
@@ -110,6 +109,38 @@ export default function CustomerDetailsCard({ searchTerm }: CustomerDetailsCardP
           </tbody>
         </table>
       </div>
+
+      {totalPages > 1 && (
+        <div style={{
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          gap: '12px',
+          padding: '12px 0 4px 0',
+          borderTop: '1px solid var(--border-color)',
+          marginTop: '12px'
+        }}>
+          <button
+            onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+            disabled={currentPage === 1}
+            className="btn-pill-dark"
+            style={{ padding: '5px 12px', borderRadius: '8px', fontSize: '11px', fontWeight: 700, cursor: currentPage === 1 ? 'not-allowed' : 'pointer', opacity: currentPage === 1 ? 0.4 : 1 }}
+          >
+            ← Anterior
+          </button>
+          <span style={{ fontSize: '11.5px', fontWeight: 700, color: 'var(--text-secondary)' }}>
+            Página {currentPage} de {totalPages}
+          </span>
+          <button
+            onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+            disabled={currentPage === totalPages}
+            className="btn-pill-dark"
+            style={{ padding: '5px 12px', borderRadius: '8px', fontSize: '11px', fontWeight: 700, cursor: currentPage === totalPages ? 'not-allowed' : 'pointer', opacity: currentPage === totalPages ? 0.4 : 1 }}
+          >
+            Siguiente →
+          </button>
+        </div>
+      )}
     </div>
   );
 }

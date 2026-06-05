@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   Percent, 
   ShoppingBag, 
@@ -7,11 +7,37 @@ import {
   Printer, 
   RefreshCw, 
   Layers, 
-  Award
+  Award,
+  Info
 } from 'lucide-react';
 import { useExchangeRate } from '../contexts/ExchangeRateContext';
 import { useToast } from './ToastNotification';
+import { useTheme } from '../contexts/ThemeContext';
 import { API_URL } from '../config';
+import CustomDatePicker from './CustomDatePicker';
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  Tooltip as ChartTooltip,
+  Legend,
+  Filler
+} from 'chart.js';
+import { Line } from 'react-chartjs-2';
+
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  ChartTooltip,
+  Legend,
+  Filler
+);
 
 interface AnaliticasProps {
   user: {
@@ -54,34 +80,29 @@ interface StarProduct {
 export default function Analiticas({ user }: AnaliticasProps) {
   const { convertToVES, formatVES, formatUSD } = useExchangeRate();
   const { addToast } = useToast();
+  const { settings } = useTheme();
+  const isDarkMode = settings.mode === 'dark';
+  
   const [period, setPeriod] = useState<'hoy' | '7dias' | '30dias' | 'año'>('30dias');
   const [startDate, setStartDate] = useState(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
   const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   const [kpis, setKpis] = useState<KPIs>({
-    totalRevenue: 6420.50,
-    totalCost: 3120.20,
-    netProfit: 3300.30,
-    transactionsCount: 254,
-    inventoryCostValue: 12500.0,
-    inventoryRetailValue: 24000.0,
-    lowStockProductsCount: 3
+    totalRevenue: 0,
+    totalCost: 0,
+    netProfit: 0,
+    transactionsCount: 0,
+    inventoryCostValue: 0,
+    inventoryRetailValue: 0,
+    lowStockProductsCount: 0
   });
 
-  const [categorySales, setCategorySales] = useState<CategorySales[]>([
-    { category: 'Bebidas', quantitySold: 345, totalRevenue: 1450.0 },
-    { category: 'Alimentos', quantitySold: 280, totalRevenue: 1980.40 },
-    { category: 'Lácteos', quantitySold: 190, totalRevenue: 1740.10 },
-    { category: 'General', quantitySold: 110, totalRevenue: 1250.00 }
-  ]);
+  const [categorySales, setCategorySales] = useState<CategorySales[]>([]);
 
-  const [starProducts] = useState<StarProduct[]>([
-    { id: '1', name: 'Refresco de Cola Premium', sku: 'REF-884', category: 'Bebidas', unitsSold: 145, retailPrice: 12.0, costPrice: 5.5, totalRevenue: 1740.0, netMargin: 942.5, roi: 118 },
-    { id: '2', name: 'Aceite de Oliva Extra 1L', sku: 'ALM-102', category: 'Alimentos', unitsSold: 84, retailPrice: 35.0, costPrice: 16.5, totalRevenue: 2940.0, netMargin: 1554.0, roi: 112 },
-    { id: '3', name: 'Queso Gouda Madurado', sku: 'LAC-304', category: 'Lácteos', unitsSold: 65, retailPrice: 22.0, costPrice: 10.2, totalRevenue: 1430.0, netMargin: 767.0, roi: 115 },
-    { id: '4', name: 'Galletas de Avena Orgánica', sku: 'ALM-622', category: 'Alimentos', unitsSold: 120, retailPrice: 9.5, costPrice: 4.0, totalRevenue: 1140.0, netMargin: 660.0, roi: 137 }
-  ]);
+  const [starProducts, setStarProducts] = useState<StarProduct[]>([]);
+
+  const [weeklyPerformance, setWeeklyPerformance] = useState<Array<{label: string; totalRevenue: number; totalCost: number}>>([]);
 
   // Carga analíticas del servidor central
   const loadAnalytics = async () => {
@@ -111,6 +132,28 @@ export default function Analiticas({ user }: AnaliticasProps) {
             setCategorySales(data);
           }
         }
+
+        // Carga productos estrella
+        const starRes = await fetch(`${API_URL}/reports/star-products`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (starRes.ok) {
+          const data = await starRes.json();
+          if (Array.isArray(data) && data.length > 0) {
+            setStarProducts(data);
+          }
+        }
+
+        // Carga rendimiento semanal
+        const weeklyRes = await fetch(`${API_URL}/reports/weekly-performance`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (weeklyRes.ok) {
+          const data = await weeklyRes.json();
+          if (Array.isArray(data)) {
+            setWeeklyPerformance(data);
+          }
+        }
       }
     } catch (err) {
       console.error('Error cargando analíticas de servidor:', err);
@@ -133,6 +176,124 @@ export default function Analiticas({ user }: AnaliticasProps) {
   const averageTicket = totalRevenue / transactionsCount;
   const profitMarginPercentage = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
   const roiPercentage = cogs > 0 ? (netProfit / cogs) * 100 : 0;
+
+  // Preparar datos para react-chartjs-2
+  const performanceChartData = useMemo(() => {
+    const labels = weeklyPerformance && weeklyPerformance.length > 0
+      ? weeklyPerformance.map(d => d.label.toUpperCase())
+      : ['SEMANA 1', 'SEMANA 2', 'SEMANA 3', 'SEMANA 4'];
+
+    const revenueData = weeklyPerformance && weeklyPerformance.length > 0
+      ? weeklyPerformance.map(d => d.totalRevenue)
+      : [0, 0, 0, 0];
+
+    const costData = weeklyPerformance && weeklyPerformance.length > 0
+      ? weeklyPerformance.map(d => d.totalCost)
+      : [0, 0, 0, 0];
+
+    return {
+      labels,
+      datasets: [
+        {
+          label: 'INGRESOS BRUTOS',
+          data: revenueData,
+          borderColor: '#3b82f6', // var(--brand-primary) equivalent blue
+          borderWidth: 3.5,
+          tension: 0.4,
+          pointRadius: 3,
+          pointHoverRadius: 6,
+          pointHoverBackgroundColor: '#3b82f6',
+          pointHoverBorderColor: '#ffffff',
+          pointHoverBorderWidth: 2,
+          fill: true,
+          backgroundColor: 'rgba(59, 130, 246, 0.15)',
+        },
+        {
+          label: 'COSTO DE VENTAS (COGS)',
+          data: costData,
+          borderColor: '#f59e0b', // var(--brand-gold) equivalent gold
+          borderWidth: 2.5,
+          tension: 0.4,
+          pointRadius: 3,
+          pointHoverRadius: 6,
+          pointHoverBackgroundColor: '#f59e0b',
+          pointHoverBorderColor: '#ffffff',
+          pointHoverBorderWidth: 2,
+          fill: true,
+          backgroundColor: 'rgba(245, 158, 11, 0.08)',
+        }
+      ]
+    };
+  }, [weeklyPerformance]);
+
+  const performanceChartOptions: any = useMemo(() => {
+    return {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          display: false, // Leyendas hechas a mano arriba del gráfico
+        },
+        tooltip: {
+          backgroundColor: isDarkMode ? '#ffffff' : '#121214',
+          titleColor: isDarkMode ? '#121214' : '#ffffff',
+          bodyColor: isDarkMode ? '#121214' : '#ffffff',
+          titleFont: {
+            family: 'Plus Jakarta Sans',
+            weight: 'bold',
+            size: 10
+          },
+          bodyFont: {
+            family: 'Plus Jakarta Sans',
+            weight: 'bold',
+            size: 12
+          },
+          padding: 10,
+          cornerRadius: 10,
+          displayColors: true,
+          callbacks: {
+            label: function (context: any) {
+              const label = context.dataset.label || '';
+              const val = context.raw || 0;
+              return ` ${label}: $${val.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+            }
+          }
+        }
+      },
+      scales: {
+        x: {
+          grid: {
+            display: false,
+          },
+          ticks: {
+            color: isDarkMode ? '#90929c' : '#4a4c54',
+            font: {
+              family: 'Plus Jakarta Sans',
+              weight: '800',
+              size: 9
+            }
+          }
+        },
+        y: {
+          min: 0,
+          ticks: {
+            callback: function (value: any) {
+              return `$${value}`;
+            },
+            color: isDarkMode ? '#90929c' : '#4a4c54',
+            font: {
+              family: 'Plus Jakarta Sans',
+              weight: '700',
+              size: 9
+            }
+          },
+          grid: {
+            color: isDarkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)',
+          }
+        }
+      }
+    };
+  }, [isDarkMode]);
 
   // Acciones de Exportación Reales
   const handleExportCSV = () => {
@@ -185,22 +346,24 @@ export default function Analiticas({ user }: AnaliticasProps) {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', width: '100%', paddingBottom: '30px' }}>
+    <div className="view-container-layout" style={{ display: 'flex', flexDirection: 'column', gap: '24px', width: '100%', paddingBottom: '30px' }}>
       
       {/* SECCIÓN 1: CABECERA Y FILTROS CORPORATIVOS */}
-      <div className="widget" style={{ padding: '20px', borderRadius: 'var(--card-radius)' }}>
+      <div className="widget view-header-widget has-grid-content" style={{ padding: '20px', borderRadius: 'var(--card-radius)' }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '16px' }}>
           
-          {/* Título de la sección */}
-          <div>
-            <h2 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text-primary)', margin: 0, fontFamily: 'var(--font-main)' }}>
-              📊 Inteligencia de Negocios y Balances
-            </h2>
-            <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>
-              Margen de utilidad neto, costo de ventas (COGS), desglose por categorías y retorno de inversión.
-            </p>
-            <span style={{ fontSize: '10px', color: 'var(--brand-primary)', fontWeight: 800, display: 'block', marginTop: '5px' }}>
-              Generado por: {user.name} ({user.role === 'ADMIN' ? 'Administrador' : 'Auditor'})
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            <div className="info-tooltip-wrapper">
+              <Info size={18} className="info-tooltip-icon" style={{ color: 'var(--text-secondary)', cursor: 'help', opacity: 0.8 }} />
+              <span className="tooltip-text">
+                Margen de utilidad neto, costo de ventas (COGS), desglose por categorías y retorno de inversión. Generado por: {user.name} ({user.role === 'ADMIN' ? 'Administrador' : 'Auditor'}).
+              </span>
+            </div>
+            <span className="view-header-pill pill-teal">
+              {kpis.transactionsCount} Ventas
+            </span>
+            <span className="view-header-pill pill-green">
+              {(kpis.totalRevenue > 0 ? (kpis.netProfit / kpis.totalRevenue) * 100 : 0).toFixed(1)}% Margen
             </span>
           </div>
 
@@ -231,21 +394,16 @@ export default function Analiticas({ user }: AnaliticasProps) {
 
             {/* Selector de Rango de Fechas */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: 'var(--text-secondary)' }}>
-              <Calendar size={13} style={{ color: 'var(--brand-primary)' }} />
-              <input 
-                type="date" 
+              <CustomDatePicker 
                 value={startDate} 
-                onChange={(e) => setStartDate(e.target.value)} 
-                className="search-input" 
-                style={{ padding: '6px 10px', fontSize: '11px', width: '115px', borderRadius: 'var(--input-radius)', height: 'auto', border: '1.5px solid var(--border-color)', backgroundColor: 'var(--bg-primary)' }} 
+                onChange={setStartDate} 
+                style={{ width: '160px' }} 
               />
               <span>a</span>
-              <input 
-                type="date" 
+              <CustomDatePicker 
                 value={endDate} 
-                onChange={(e) => setEndDate(e.target.value)} 
-                className="search-input" 
-                style={{ padding: '6px 10px', fontSize: '11px', width: '115px', borderRadius: 'var(--input-radius)', height: 'auto', border: '1.5px solid var(--border-color)', backgroundColor: 'var(--bg-primary)' }} 
+                onChange={setEndDate} 
+                style={{ width: '160px' }} 
               />
             </div>
 
@@ -391,72 +549,7 @@ export default function Analiticas({ user }: AnaliticasProps) {
           </div>
 
           <div style={{ flex: 1, position: 'relative', minHeight: '200px' }}>
-            <svg viewBox="0 0 500 180" style={{ width: '100%', height: '100%', overflow: 'visible' }}>
-              <defs>
-                <linearGradient id="areaRevenue" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="var(--brand-primary)" stopOpacity="0.25" />
-                  <stop offset="100%" stopColor="var(--brand-primary)" stopOpacity="0.0" />
-                </linearGradient>
-                <linearGradient id="areaCost" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="var(--brand-gold)" stopOpacity="0.18" />
-                  <stop offset="100%" stopColor="var(--brand-gold)" stopOpacity="0.0" />
-                </linearGradient>
-              </defs>
-              
-              {/* Grid Lines */}
-              <line x1="0" y1="40" x2="500" y2="40" stroke="var(--border-color)" strokeDasharray="3 3" />
-              <line x1="0" y1="90" x2="500" y2="90" stroke="var(--border-color)" strokeDasharray="3 3" />
-              <line x1="0" y1="140" x2="500" y2="140" stroke="var(--border-color)" strokeDasharray="3 3" />
-              
-              {/* Area 1: Revenue */}
-              <path 
-                d="M 0,180 Q 80,120 160,80 T 320,110 T 420,50 T 500,20 L 500,180 Z" 
-                fill="url(#areaRevenue)" 
-              />
-              
-              {/* Area 2: Cost */}
-              <path 
-                d="M 0,180 Q 80,140 160,110 T 320,135 T 420,95 T 500,70 L 500,180 Z" 
-                fill="url(#areaCost)" 
-              />
-
-              {/* Line 1: Revenue Path */}
-              <path 
-                d="M 0,180 Q 80,120 160,80 T 320,110 T 420,50 T 500,20" 
-                fill="none" 
-                stroke="var(--brand-primary)" 
-                strokeWidth="3" 
-                strokeLinecap="round" 
-              />
-
-              {/* Line 2: Cost Path */}
-              <path 
-                d="M 0,180 Q 80,140 160,110 T 320,135 T 420,95 T 500,70" 
-                fill="none" 
-                stroke="var(--brand-gold)" 
-                strokeWidth="2.5" 
-                strokeLinecap="round" 
-              />
-
-              {/* Vertices indicator dots */}
-              <circle cx="160" cy="80" r="4.5" fill="var(--brand-primary)" stroke="var(--bg-card)" strokeWidth="1.5" />
-              <circle cx="320" cy="110" r="4.5" fill="var(--brand-primary)" stroke="var(--bg-card)" strokeWidth="1.5" />
-              <circle cx="420" cy="50" r="4.5" fill="var(--brand-primary)" stroke="var(--bg-card)" strokeWidth="1.5" />
-              <circle cx="500" cy="20" r="4.5" fill="var(--brand-primary)" stroke="var(--bg-card)" strokeWidth="1.5" />
-
-              <circle cx="160" cy="110" r="4" fill="var(--brand-gold)" stroke="var(--bg-card)" strokeWidth="1.5" />
-              <circle cx="320" cy="135" r="4" fill="var(--brand-gold)" stroke="var(--bg-card)" strokeWidth="1.5" />
-              <circle cx="420" cy="95" r="4" fill="var(--brand-gold)" stroke="var(--bg-card)" strokeWidth="1.5" />
-              <circle cx="500" cy="70" r="4" fill="var(--brand-gold)" stroke="var(--bg-card)" strokeWidth="1.5" />
-            </svg>
-
-            {/* X-Axis labels */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: 'var(--text-secondary)', marginTop: '8px', fontWeight: 800 }}>
-              <span>SEMANA 1</span>
-              <span>SEMANA 2</span>
-              <span>SEMANA 3</span>
-              <span>SEMANA 4 (ACTUAL)</span>
-            </div>
+            <Line data={performanceChartData} options={performanceChartOptions} />
           </div>
         </div>
 

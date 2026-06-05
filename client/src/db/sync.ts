@@ -21,23 +21,44 @@ class SyncWorker {
 
   private listeners: Set<SyncStateListener> = new Set();
   private syncInterval: any = null;
+  private boundGoOnline: (() => void) | null = null;
+  private boundGoOffline: (() => void) | null = null;
 
   constructor() {
-    // Escucha cambios en el estado de conexión del navegador
     if (typeof window !== 'undefined') {
-      window.addEventListener('online', () => {
+      this.boundGoOnline = () => {
         console.log('🌐 Conexión de red recuperada. Iniciando sincronización automática...');
+        this.startInterval();
         this.sync();
-      });
+      };
+      this.boundGoOffline = () => {
+        console.log('🔌 Dispositivo sin conexión. Deteniendo sincronización periódica.');
+        this.stopInterval();
+      };
 
-      // Inicia un chequeo recurrente cada 45 segundos para mantener consistencia
-      this.syncInterval = setInterval(() => {
-        this.sync();
-      }, 45000);
+      window.addEventListener('online', this.boundGoOnline);
+      window.addEventListener('offline', this.boundGoOffline);
+
+      if (navigator.onLine) {
+        this.startInterval();
+      }
     }
 
-    // Calcula inicialmente cuántas ventas están pendientes
     this.updatePendingSalesCount();
+  }
+
+  private startInterval() {
+    this.stopInterval();
+    this.syncInterval = setInterval(() => {
+      this.sync();
+    }, 120000);
+  }
+
+  private stopInterval() {
+    if (this.syncInterval) {
+      clearInterval(this.syncInterval);
+      this.syncInterval = null;
+    }
   }
 
   // Registra un listener para actualizaciones reactivas del estado
@@ -177,9 +198,15 @@ class SyncWorker {
         body: JSON.stringify({ lastSyncedAt: lastSynced })
       });
 
+      if (!pullResponse.ok) {
+        console.warn(`[Sync] PULL Productos: ${pullResponse.status} - ${pullResponse.statusText}. Saltando pull de productos.`);
+        this.setState({ lastSyncedAt: lastSynced, isSyncing: false, error: null });
+        return;
+      }
+
       const pullData = await pullResponse.json();
 
-      if (pullResponse.ok && pullData.success) {
+      if (pullData.success) {
         const { products, serverTime } = pullData;
         
         if (products && products.length > 0) {
@@ -304,13 +331,13 @@ class SyncWorker {
                 id: s.id,
                 companyName: s.name,
                 contactName: s.contact || '',
-                email: '',
+                email: s.email || '',
                 phone: s.phone || '',
-                address: '',
-                category: '',
-                paymentTerms: 'Contado',
-                status: 'Activo',
-                rif: '',
+                address: s.address || '',
+                category: s.category || 'General',
+                paymentTerms: s.paymentTerms || 'Contado',
+                status: s.status || 'Activo',
+                rif: s.rif || '',
                 updatedAt: new Date(s.updatedAt).toISOString()
               });
             }
@@ -395,9 +422,12 @@ class SyncWorker {
   }
 
   destroy() {
-    if (this.syncInterval) {
-      clearInterval(this.syncInterval);
+    this.stopInterval();
+    if (typeof window !== 'undefined') {
+      if (this.boundGoOnline) window.removeEventListener('online', this.boundGoOnline);
+      if (this.boundGoOffline) window.removeEventListener('offline', this.boundGoOffline);
     }
+    this.listeners.clear();
   }
 }
 

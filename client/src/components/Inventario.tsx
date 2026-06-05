@@ -1,11 +1,19 @@
 import { useState, useEffect } from 'react';
-import { Search, Plus, Sparkles, Check, X, AlertTriangle, AlertCircle, Edit, Trash2, ShoppingBag, RefreshCw } from 'lucide-react';
+import { Search, Plus, Sparkles, Check, X, AlertTriangle, AlertCircle, Edit, Trash2, ShoppingBag, RefreshCw, Info, History } from 'lucide-react';
 import { getDatabase, type ProductDocType } from '../db/database';
 import { syncWorker } from '../db/sync';
 import { useExchangeRate } from '../contexts/ExchangeRateContext';
+import CustomSelect from './CustomSelect';
+import { logAuditEvent } from '../utils/audit';
+import CustomDatePicker from './CustomDatePicker';
+
 
 interface InventarioProps {
   searchTerm?: string;
+  user: {
+    role: string;
+    name: string;
+  };
 }
 
 interface CustomProduct extends ProductDocType {
@@ -15,13 +23,13 @@ interface CustomProduct extends ProductDocType {
   expiryDate?: string;
 }
 
-export default function Inventario({ searchTerm = '' }: InventarioProps) {
+export default function Inventario({ searchTerm = '', user }: InventarioProps) {
+  const isAdmin = user.role === 'ADMIN';
   const { convertToVES, formatVES, formatUSD } = useExchangeRate();
   const [products, setProducts] = useState<CustomProduct[]>([]);
   const [localSearchTerm, setLocalSearchTerm] = useState('');
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  // Modals state
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingProduct, setEditingProduct] = useState<CustomProduct | null>(null);
@@ -42,6 +50,24 @@ export default function Inventario({ searchTerm = '' }: InventarioProps) {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<CustomProduct | null>(null);
   const [showSuccessToast, setShowSuccessToast] = useState<string | null>(null);
   const [alertConfig, setAlertConfig] = useState<{ title: string; message: string; type: 'success' | 'error' | 'info' } | null>(null);
+
+  // Lotes, Kardex and Bulk load states
+  const [editBatches, setEditBatches] = useState<any[]>([]);
+  const [showKardexModal, setShowKardexModal] = useState(false);
+  const [kardexProduct, setKardexProduct] = useState<CustomProduct | null>(null);
+  const [kardexMovements, setKardexMovements] = useState<any[]>([]);
+  const [showBulkModal, setShowBulkModal] = useState(false);
+  const [csvPreview, setCsvPreview] = useState<any[]>([]);
+  const [csvErrors, setCsvErrors] = useState<string[]>([]);
+  const [csvStats, setCsvStats] = useState({ newProds: 0, updateProds: 0, total: 0 });
+
+  // Mobile detection for full-height modal layout
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth <= 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   // C4: Pagination state
   const [currentPage, setCurrentPage] = useState(1);
@@ -74,35 +100,31 @@ export default function Inventario({ searchTerm = '' }: InventarioProps) {
       const mapped = allProds.map(doc => {
         const json = doc.toJSON();
         
-        // Custom parsing or simulated values for extended fields
-        let description = 'Sin descripción.';
-        let unit = 'unidades';
-        let supplierName = 'Proveedor General';
-        let expiryDate = 'N/A';
-
-        // Add some realistic simulated fields for default products
-        if (json.code === '1001') {
-          description = 'Café en grano tostado oscuro de exportación.';
-          unit = 'kg';
-          supplierName = 'Cervecería Polar C.A.';
-        } else if (json.code === '1002') {
-          description = 'Té matcha orgánico pulverizado de Japón.';
-          unit = 'unidades';
-          supplierName = 'Alimentos Heinz de Venezuela C.A.';
-          expiryDate = '2027-12-31';
-        } else if (json.code === '1005') {
-          description = 'Leche entera pasteurizada enriquecida con calcio.';
-          unit = 'litros';
-          supplierName = 'Lácteos Los Andes C.A.';
-          expiryDate = '2026-08-15';
+        // Calcular fecha de expiración a partir de los lotes activos
+        let expiry = 'N/A';
+        try {
+          if (json.batches) {
+            const parsed = JSON.parse(json.batches);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              const dates = parsed
+                .map((b: any) => b.expiryDate)
+                .filter((d: any) => d && d !== 'N/A');
+              if (dates.length > 0) {
+                dates.sort();
+                expiry = dates[0];
+              }
+            }
+          }
+        } catch (e) {
+          console.error(e);
         }
 
         return {
           ...json,
-          description,
-          unit,
-          supplierName,
-          expiryDate
+          description: 'Sin descripción.',
+          unit: 'unidades',
+          supplierName: 'Proveedor General',
+          expiryDate: expiry,
         };
       });
 
@@ -119,12 +141,6 @@ export default function Inventario({ searchTerm = '' }: InventarioProps) {
       const saved = localStorage.getItem('stockmaster_suppliers_local');
       if (saved) {
         setSuppliersList(JSON.parse(saved));
-      } else {
-        setSuppliersList([
-          { rif: 'J-00006572-4', companyName: 'Cervecería Polar C.A.' },
-          { rif: 'J-00032991-2', companyName: 'Alimentos Heinz de Venezuela C.A.' },
-          { rif: 'J-30477401-2', companyName: 'Lácteos Los Andes C.A.' }
-        ]);
       }
     } catch (e) {
       console.error(e);
@@ -150,6 +166,7 @@ export default function Inventario({ searchTerm = '' }: InventarioProps) {
 
   const handleAddProduct = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isAdmin) return;
     if (!newProduct.code || !newProduct.name || !newProduct.priceUSD || !newProduct.stock) {
       setAlertConfig({
         title: 'Campos Obligatorios',
@@ -172,6 +189,11 @@ export default function Inventario({ searchTerm = '' }: InventarioProps) {
       }
 
       const prodId = crypto.randomUUID();
+      const initialBatch = {
+        loteCode: 'LOTE-INICIAL',
+        expiryDate: newProduct.expiryDate || 'N/A',
+        stock: Number(newProduct.stock)
+      };
 
       await db.products.insert({
         id: prodId,
@@ -182,8 +204,16 @@ export default function Inventario({ searchTerm = '' }: InventarioProps) {
         cost: Number(newProduct.costUSD) || 0,
         stock: Number(newProduct.stock),
         minStock: Number(newProduct.minStock) || 5,
+        batches: JSON.stringify([initialBatch]),
         version: 1,
         updatedAt: new Date().toISOString()
+      });
+
+      logAuditEvent(user, 'PRODUCTO_CREAR', {
+        productId: prodId,
+        name: newProduct.name.trim(),
+        price: Number(newProduct.priceUSD),
+        stock: Number(newProduct.stock)
       });
 
       setShowAddModal(false);
@@ -219,7 +249,28 @@ export default function Inventario({ searchTerm = '' }: InventarioProps) {
   };
 
   const handleEditClick = (prod: CustomProduct) => {
+    if (!isAdmin) return;
     setEditingProduct(prod);
+    
+    let parsedBatches: any[] = [];
+    try {
+      if (prod.batches) {
+        parsedBatches = JSON.parse(prod.batches);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    if (parsedBatches.length === 0) {
+      parsedBatches = [
+        {
+          loteCode: 'LOTE-INICIAL',
+          expiryDate: prod.expiryDate || 'N/A',
+          stock: prod.stock
+        }
+      ];
+    }
+    setEditBatches(parsedBatches);
+
     setEditForm({
       name: prod.name,
       category: prod.category,
@@ -239,6 +290,7 @@ export default function Inventario({ searchTerm = '' }: InventarioProps) {
 
   const handleEditProduct = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isAdmin) return;
     if (!editingProduct) return;
 
     try {
@@ -267,38 +319,28 @@ export default function Inventario({ searchTerm = '' }: InventarioProps) {
           cost: Number(editForm.costUSD) || 0,
           stock: newStockVal,
           minStock: Number(editForm.minStock) || 5,
+          batches: JSON.stringify(editBatches),
           version: (doc.get('version') || 1) + 1,
           updatedAt: new Date().toISOString()
         });
 
         // Registrar en logs locales si el stock cambió
         if (stockChanged) {
-          const newAuditLog = {
-            id: 'local_log_' + crypto.randomUUID(),
-            action: 'STOCK_AJUSTE_JUSTIFICADO',
-            details: JSON.stringify({
-              productId: editingProduct.id,
-              productName: editForm.name.trim(),
-              code: editingProduct.code,
-              previousStock: originalStock,
-              newStock: newStockVal,
-              reason: editForm.stockReason,
-              justification: editForm.stockJustification.trim()
-            }, null, 2),
-            ipAddress: '127.0.0.1 (Local)',
-            userAgent: navigator.userAgent + ' (PWA Local)',
-            createdAt: new Date().toISOString(),
-            user: {
-              name: 'Administrador Local',
-              email: 'admin@stockmaster.pro',
-              role: 'ADMIN'
-            }
-          };
-
-          const savedLocal = localStorage.getItem('stockmaster_local_audit_logs');
-          const localLogs = savedLocal ? JSON.parse(savedLocal) : [];
-          localLogs.unshift(newAuditLog);
-          localStorage.setItem('stockmaster_local_audit_logs', JSON.stringify(localLogs));
+          logAuditEvent(user, 'STOCK_AJUSTE_JUSTIFICADO', {
+            productId: editingProduct.id,
+            productName: editForm.name.trim(),
+            code: editingProduct.code,
+            prevStock: originalStock,
+            newStock: newStockVal,
+            reason: editForm.stockReason,
+            justification: editForm.stockJustification.trim()
+          });
+        } else {
+          logAuditEvent(user, 'PRODUCTO_EDITAR', {
+            productId: editingProduct.id,
+            code: editingProduct.code,
+            name: editForm.name.trim()
+          });
         }
 
         setShowEditModal(false);
@@ -319,7 +361,411 @@ export default function Inventario({ searchTerm = '' }: InventarioProps) {
     }
   };
 
+  const handleBatchChange = (index: number, field: string, value: any) => {
+    const updated = [...editBatches];
+    updated[index] = { ...updated[index], [field]: value };
+    setEditBatches(updated);
+    
+    // Recalculate total stock and earliest expiration date
+    const total = updated.reduce((acc, b) => acc + (Number(b.stock) || 0), 0);
+    const dates = updated.map(b => b.expiryDate).filter(d => d && d !== 'N/A' && d !== '');
+    const earliest = dates.length > 0 ? [...dates].sort()[0] : '';
+    
+    setEditForm(prev => ({ 
+      ...prev, 
+      stock: total.toString(),
+      expiryDate: earliest
+    }));
+  };
+
+  const handleAddBatch = () => {
+    const newBatch = {
+      loteCode: 'LOTE-' + Math.random().toString(36).substring(2, 7).toUpperCase(),
+      expiryDate: '',
+      stock: 0
+    };
+    const updated = [...editBatches, newBatch];
+    setEditBatches(updated);
+    
+    // Recalculate total stock and earliest expiration date
+    const total = updated.reduce((acc, b) => acc + (Number(b.stock) || 0), 0);
+    const dates = updated.map(b => b.expiryDate).filter(d => d && d !== 'N/A' && d !== '');
+    const earliest = dates.length > 0 ? [...dates].sort()[0] : '';
+    
+    setEditForm(prev => ({ 
+      ...prev, 
+      stock: total.toString(),
+      expiryDate: earliest
+    }));
+  };
+
+  const handleRemoveBatch = (index: number) => {
+    if (editBatches.length <= 1) {
+      setAlertConfig({
+        title: 'Lote Requerido',
+        message: 'Un producto debe tener al menos un lote activo.',
+        type: 'info'
+      });
+      return;
+    }
+    const updated = editBatches.filter((_, idx) => idx !== index);
+    setEditBatches(updated);
+    
+    // Recalculate total stock and earliest expiration date
+    const total = updated.reduce((acc, b) => acc + (Number(b.stock) || 0), 0);
+    const dates = updated.map(b => b.expiryDate).filter(d => d && d !== 'N/A' && d !== '');
+    const earliest = dates.length > 0 ? [...dates].sort()[0] : '';
+    
+    setEditForm(prev => ({ 
+      ...prev, 
+      stock: total.toString(),
+      expiryDate: earliest
+    }));
+  };
+
+  const handleKardexClick = async (prod: CustomProduct) => {
+    setKardexProduct(prod);
+    setShowKardexModal(true);
+    setKardexMovements([]);
+    
+    try {
+      const db = await getDatabase();
+      
+      const salesDocs = await db.sales.find().exec();
+      const productSales = salesDocs
+        .map(d => d.toJSON())
+        .filter(sale => sale.items.some((item: any) => item.productId === prod.id));
+        
+      const purchasesDocs = await db.purchases.find().exec();
+      const productPurchases = purchasesDocs
+        .map(d => d.toJSON())
+        .filter(purchase => purchase.items.some((item: any) => item.productId === prod.id));
+        
+      const auditDocs = await db.auditLogs.find().exec();
+      const productAudits = auditDocs
+        .map(d => d.toJSON())
+        .filter(log => {
+          try {
+            const detailsObj = JSON.parse(log.details || '{}');
+            return detailsObj.productId === prod.id;
+          } catch {
+            return false;
+          }
+        });
+
+      const movements: any[] = [];
+      
+      productSales.forEach(sale => {
+        const item = sale.items.find((i: any) => i.productId === prod.id);
+        movements.push({
+          date: sale.createdAt,
+          type: 'VENTA',
+          reference: sale.ticketNumber,
+          qtyChange: -item.quantity,
+          user: sale.cashierId || 'Cajero',
+          justification: 'Venta facturada en terminal POS.'
+        });
+      });
+      
+      productPurchases.forEach(purchase => {
+        const item = purchase.items.find((i: any) => i.productId === prod.id);
+        movements.push({
+          date: purchase.createdAt,
+          type: 'COMPRA',
+          reference: purchase.invoiceNumber || 'S/N',
+          qtyChange: item.quantity,
+          user: 'Admin',
+          justification: 'Ingreso por reabastecimiento de inventario.'
+        });
+      });
+      
+      productAudits.forEach(log => {
+        const details = JSON.parse(log.details || '{}');
+        const qtyChange = (details.newStock !== undefined && details.prevStock !== undefined)
+          ? (details.newStock - details.prevStock)
+          : (details.stock || 0);
+        let type = 'AJUSTE';
+        if (log.action === 'STOCK_AJUSTE_JUSTIFICADO') {
+          type = 'AJUSTE_MANUAL';
+        } else if (log.action === 'PRODUCTO_CREAR') {
+          type = 'CREACIÓN';
+        }
+        
+        movements.push({
+          date: log.createdAt,
+          type: type,
+          reference: 'N/A',
+          qtyChange: qtyChange,
+          user: log.userId || 'Sistema',
+          justification: details.justification || details.reason || 'Ajuste de stock inicial/manual.'
+        });
+      });
+
+      movements.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+      
+      let balance = 0;
+      const movementsWithBalance = movements.map(mov => {
+        const prevBal = balance;
+        balance += mov.qtyChange;
+        return {
+          ...mov,
+          prevStock: prevBal,
+          resultStock: balance
+        };
+      });
+      
+      movementsWithBalance.reverse();
+      setKardexMovements(movementsWithBalance);
+    } catch (err) {
+      console.error('Error al cargar kárdex:', err);
+    }
+  };
+
+  const handleExportCSV = () => {
+    if (products.length === 0) return;
+    const headers = ['code', 'name', 'category', 'price', 'cost', 'stock', 'minStock', 'expiryDate'];
+    const csvRows = [headers.join(',')];
+    
+    products.forEach(p => {
+      const row = [
+        `"${p.code}"`,
+        `"${p.name.replace(/"/g, '""')}"`,
+        `"${p.category}"`,
+        p.price,
+        p.cost,
+        p.stock,
+        p.minStock,
+        `"${p.expiryDate || 'N/A'}"`
+      ];
+      csvRows.push(row.join(','));
+    });
+    
+    const csvContent = csvRows.join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `inventario_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleImportCSV = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const text = event.target?.result as string;
+      if (!text) return;
+      
+      const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+      if (lines.length <= 1) {
+        setCsvErrors(['El archivo CSV está vacío o solo contiene cabeceras.']);
+        return;
+      }
+      
+      const headers = lines[0].split(',').map(h => h.trim().replace(/^["']|["']$/g, ''));
+      const requiredHeaders = ['code', 'name', 'price', 'stock'];
+      const missing = requiredHeaders.filter(req => !headers.includes(req));
+      if (missing.length > 0) {
+        setCsvErrors([`Cabeceras faltantes requeridas: ${missing.join(', ')}`]);
+        return;
+      }
+      
+      const parsedProducts: any[] = [];
+      const errors: string[] = [];
+      let newCount = 0;
+      let updateCount = 0;
+      
+      try {
+        const db = await getDatabase();
+        const existingDocs = await db.products.find().exec();
+        const existingCodes = new Set(existingDocs.map(p => p.get('code')));
+        
+        for (let i = 1; i < lines.length; i++) {
+          const line = lines[i];
+          const matches = line.match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g) || line.split(',');
+          const values = matches.map(v => v.trim().replace(/^["']|["']$/g, ''));
+          
+          if (values.length < requiredHeaders.length) {
+            errors.push(`Fila ${i + 1}: Datos incompletos.`);
+            continue;
+          }
+          
+          const rowData: Record<string, string> = {};
+          headers.forEach((h, idx) => {
+            rowData[h] = values[idx] || '';
+          });
+          
+          const code = rowData.code?.trim();
+          const name = rowData.name?.trim();
+          const category = rowData.category?.trim() || 'General';
+          const price = parseFloat(rowData.price);
+          const cost = parseFloat(rowData.cost || '0');
+          const stock = parseFloat(rowData.stock);
+          const minStock = parseFloat(rowData.minStock || '5');
+          const expiryDate = rowData.expiryDate?.trim() || 'N/A';
+          
+          if (!code) {
+            errors.push(`Fila ${i + 1}: El campo 'code' es obligatorio.`);
+            continue;
+          }
+          if (!name) {
+            errors.push(`Fila ${i + 1}: El campo 'name' es obligatorio.`);
+            continue;
+          }
+          if (isNaN(price) || price < 0) {
+            errors.push(`Fila ${i + 1}: El precio '${rowData.price}' no es un número válido.`);
+            continue;
+          }
+          if (isNaN(cost) || cost < 0) {
+            errors.push(`Fila ${i + 1}: El costo '${rowData.cost}' no es un número válido.`);
+            continue;
+          }
+          if (isNaN(stock) || stock < 0) {
+            errors.push(`Fila ${i + 1}: El stock '${rowData.stock}' no es un número válido.`);
+            continue;
+          }
+          if (isNaN(minStock) || minStock < 0) {
+            errors.push(`Fila ${i + 1}: El stock mínimo '${rowData.minStock}' no es un número válido.`);
+            continue;
+          }
+          
+          if (existingCodes.has(code)) {
+            updateCount++;
+          } else {
+            newCount++;
+          }
+          
+          parsedProducts.push({
+            code,
+            name,
+            category,
+            price,
+            cost,
+            stock,
+            minStock,
+            expiryDate
+          });
+        }
+        
+        setCsvPreview(parsedProducts);
+        setCsvErrors(errors);
+        setCsvStats({ newProds: newCount, updateProds: updateCount, total: parsedProducts.length });
+      } catch (err) {
+        console.error(err);
+        setCsvErrors(['Error procesando la validación del inventario local.']);
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const handleConfirmImport = async () => {
+    if (csvPreview.length === 0) return;
+    
+    try {
+      const db = await getDatabase();
+      const insertPromises: Promise<any>[] = [];
+      
+      for (const p of csvPreview) {
+        const doc = await db.products.findOne({ selector: { code: p.code } }).exec();
+        
+        if (doc) {
+          const currentVersion = doc.get('version') || 1;
+          const prevStock = doc.get('stock');
+          const newStock = prevStock + p.stock;
+          
+          let batches: any[] = [];
+          try {
+            if (doc.get('batches')) {
+              batches = JSON.parse(doc.get('batches'));
+            }
+          } catch {}
+          batches.push({
+            loteCode: 'LOTE-IMPORTADO-' + Date.now().toString(36),
+            expiryDate: p.expiryDate || 'N/A',
+            stock: p.stock
+          });
+
+          await doc.patch({
+            name: p.name,
+            category: p.category,
+            price: p.price,
+            cost: p.cost,
+            stock: newStock,
+            minStock: p.minStock,
+            batches: JSON.stringify(batches),
+            version: currentVersion + 1,
+            updatedAt: new Date().toISOString()
+          });
+          
+          insertPromises.push(
+            logAuditEvent(user, 'STOCK_AJUSTE_JUSTIFICADO', {
+              productId: doc.get('id'),
+              productName: p.name,
+              code: p.code,
+              prevStock,
+              newStock,
+              reason: 'Carga Masiva CSV',
+              justification: 'Importación y mezcla de stock vía archivo CSV'
+            })
+          );
+        } else {
+          const prodId = crypto.randomUUID();
+          const initialBatch = {
+            loteCode: 'LOTE-IMPORTADO',
+            expiryDate: p.expiryDate || 'N/A',
+            stock: p.stock
+          };
+
+          await db.products.insert({
+            id: prodId,
+            code: p.code,
+            name: p.name,
+            category: p.category,
+            price: p.price,
+            cost: p.cost,
+            stock: p.stock,
+            minStock: p.minStock,
+            batches: JSON.stringify([initialBatch]),
+            version: 1,
+            updatedAt: new Date().toISOString()
+          });
+          
+          insertPromises.push(
+            logAuditEvent(user, 'PRODUCTO_CREAR', {
+              productId: prodId,
+              name: p.name,
+              price: p.price,
+              stock: p.stock
+            })
+          );
+        }
+      }
+      
+      await Promise.allSettled(insertPromises);
+      setShowBulkModal(false);
+      setCsvPreview([]);
+      setCsvErrors([]);
+      setShowSuccessToast(`Importación completa: ${csvStats.total} productos procesados con éxito.`);
+      setTimeout(() => setShowSuccessToast(null), 3500);
+      loadProducts();
+      
+      syncWorker.sync();
+    } catch (err) {
+      console.error('Error al importar:', err);
+      setAlertConfig({
+        title: 'Error de Importación',
+        message: 'Ocurrió un error al guardar los productos importados en la base de datos.',
+        type: 'error'
+      });
+    }
+  };
+
   const handleDeleteProduct = async () => {
+    if (!isAdmin) return;
     if (!showDeleteConfirm) return;
 
     try {
@@ -327,6 +773,11 @@ export default function Inventario({ searchTerm = '' }: InventarioProps) {
       const doc = await db.products.findOne({ selector: { id: showDeleteConfirm.id } }).exec();
       if (doc) {
         await doc.remove();
+
+        logAuditEvent(user, 'PRODUCTO_ELIMINAR', {
+          id: showDeleteConfirm.id
+        });
+
         setShowDeleteConfirm(null);
 
         setShowSuccessToast('Producto removido correctamente del catálogo.');
@@ -347,33 +798,6 @@ export default function Inventario({ searchTerm = '' }: InventarioProps) {
     }
   };
 
-  // Seed default products
-  const handleSeedProducts = async () => {
-    try {
-      const db = await getDatabase();
-      const seedData = [
-        { id: 'p1', code: '1001', name: 'Café Espresso Premium 1kg', category: 'Bebidas', price: 15.0, cost: 8.0, stock: 12, minStock: 5 },
-        { id: 'p2', code: '1002', name: 'Té Matcha Japonés 100g', category: 'Bebidas', price: 11.0, cost: 5.5, stock: 4, minStock: 5 },
-        { id: 'p3', code: '1003', name: 'Croissant de Mantequilla', category: 'Alimentos', price: 2.0, cost: 0.8, stock: 25, minStock: 10 },
-        { id: 'p4', code: '1004', name: 'Tarta de Chocolate Gourmet', category: 'Alimentos', price: 24.0, cost: 12.0, stock: 8, minStock: 3 },
-        { id: 'p5', code: '1005', name: 'Leche Entera Premium 1L', category: 'Lácteos', price: 1.5, cost: 0.7, stock: 40, minStock: 10 }
-      ];
-
-      for (const item of seedData) {
-        await db.products.upsert({
-          ...item,
-          version: 1,
-          updatedAt: new Date().toISOString()
-        });
-      }
-
-      loadProducts();
-      syncWorker.sync();
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
   const activeSearch = searchTerm || localSearchTerm;
   
   const filteredProducts = products.filter(prod => 
@@ -388,19 +812,26 @@ export default function Inventario({ searchTerm = '' }: InventarioProps) {
   const paginatedProducts = filteredProducts.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', width: '100%', paddingBottom: '30px' }}>
+    <div className="view-container-layout" style={{ display: 'flex', flexDirection: 'column', gap: '24px', width: '100%', paddingBottom: '30px' }}>
       
       {/* SECCIÓN 1: CONTROLES Y CABECERA */}
-      <div className="widget" style={{ padding: '20px', borderRadius: 'var(--card-radius)' }}>
+      <div className="widget view-header-widget" style={{ padding: '20px', borderRadius: 'var(--card-radius)' }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '16px' }}>
-          
-          <div>
-            <h2 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text-primary)', margin: 0, fontFamily: 'var(--font-main)' }}>
-              📦 Catálogo de Productos e Inventarios
-            </h2>
-            <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>
-              Administra precios, existencias y costos de adquisición expresados de forma dual (USD / VES BCV).
-            </p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            <div className="info-tooltip-wrapper">
+              <Info size={18} className="info-tooltip-icon" style={{ color: 'var(--text-secondary)', cursor: 'help', opacity: 0.8 }} />
+              <span className="tooltip-text">
+                Administra precios, existencias y costos de adquisición expresados de forma dual (USD / VES BCV).
+              </span>
+            </div>
+            <span className="view-header-pill pill-teal">
+              {products.length} Productos
+            </span>
+            {products.filter(p => p.stock <= (p.minStock || 5)).length > 0 && (
+              <span className="view-header-pill pill-red">
+                {products.filter(p => p.stock <= (p.minStock || 5)).length} Bajo Stock
+              </span>
+            )}
           </div>
 
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'center' }}>
@@ -419,25 +850,27 @@ export default function Inventario({ searchTerm = '' }: InventarioProps) {
               </div>
             )}
 
-            {products.length === 0 && (
+            {isAdmin && (
               <button 
-                onClick={handleSeedProducts}
-                className="btn-pill-dark"
-                style={{ color: 'var(--brand-gold)', borderColor: 'rgba(251, 191, 36, 0.25)', gap: '6px', height: '40px' }}
+                onClick={() => setShowAddModal(true)}
+                className="btn-yellow"
+                style={{ gap: '8px', padding: '10px 18px', borderRadius: 'var(--button-radius)' }}
               >
-                <Sparkles size={14} />
-                <span>Sembrar Muestra</span>
+                <Plus size={16} />
+                <span>Nuevo Producto</span>
               </button>
             )}
 
-            <button 
-              onClick={() => setShowAddModal(true)}
-              className="btn-yellow"
-              style={{ gap: '8px', padding: '10px 18px', borderRadius: 'var(--button-radius)' }}
-            >
-              <Plus size={16} />
-              <span>Nuevo Producto</span>
-            </button>
+            {isAdmin && (
+              <button 
+                onClick={() => setShowBulkModal(true)}
+                className="btn-pill-dark"
+                style={{ gap: '8px', padding: '10px 18px', borderRadius: 'var(--button-radius)', backgroundColor: 'var(--bg-input)', display: 'flex', alignItems: 'center' }}
+              >
+                <Sparkles size={14} style={{ color: 'var(--brand-primary)' }} />
+                <span>Carga Masiva</span>
+              </button>
+            )}
 
             <button 
               onClick={loadProducts}
@@ -478,7 +911,7 @@ export default function Inventario({ searchTerm = '' }: InventarioProps) {
       )}
 
       {/* SECCIÓN 2: TABLA DE CATÁLOGO */}
-      <div className="widget" style={{ padding: '24px', borderRadius: 'var(--card-radius)', display: 'flex', flexDirection: 'column' }}>
+      <div className="widget view-content-widget" style={{ padding: '24px', borderRadius: 'var(--card-radius)', display: 'flex', flexDirection: 'column' }}>
         <div className="details-table-wrapper" style={{ overflowX: 'auto' }}>
           <table className="details-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12.5px' }}>
             <thead>
@@ -489,10 +922,11 @@ export default function Inventario({ searchTerm = '' }: InventarioProps) {
                 <th style={{ padding: '10px 8px', fontWeight: 800, textAlign: 'right' }}>COSTO COMPRA ($)</th>
                 <th style={{ padding: '10px 8px', fontWeight: 800, textAlign: 'right' }}>PRECIO VENTA (USD)</th>
                 <th style={{ padding: '10px 8px', fontWeight: 800, textAlign: 'right' }}>PRECIO BCV (VES)</th>
+                <th style={{ padding: '10px 8px', fontWeight: 800, textAlign: 'right' }}>MARGEN %</th>
                 <th style={{ padding: '10px 8px', fontWeight: 800, textAlign: 'center' }}>EXISTENCIA</th>
                 <th style={{ padding: '10px 8px', fontWeight: 800, textAlign: 'center' }}>EXPIRACIÓN</th>
                 <th style={{ padding: '10px 8px', fontWeight: 800, textAlign: 'center' }}>ESTADO</th>
-                <th style={{ padding: '10px 8px', fontWeight: 800, textAlign: 'center' }}>ACCIONES</th>
+                {isAdmin && <th style={{ padding: '10px 8px', fontWeight: 800, textAlign: 'center' }}>ACCIONES</th>}
               </tr>
             </thead>
             <tbody>
@@ -520,6 +954,9 @@ export default function Inventario({ searchTerm = '' }: InventarioProps) {
                     <td style={{ padding: '12px 8px', textAlign: 'right' }}>
                       <div className="skeleton-pulse" style={{ width: '65px', height: '14px', borderRadius: '4px', backgroundColor: 'var(--bg-input)', animation: 'pulse 1.5s infinite ease-in-out', marginLeft: 'auto' }} />
                     </td>
+                    <td style={{ padding: '12px 8px', textAlign: 'right' }}>
+                      <div className="skeleton-pulse" style={{ width: '45px', height: '14px', borderRadius: '4px', backgroundColor: 'var(--bg-input)', animation: 'pulse 1.5s infinite ease-in-out', marginLeft: 'auto' }} />
+                    </td>
                     <td style={{ padding: '12px 8px', textAlign: 'center' }}>
                       <div className="skeleton-pulse" style={{ width: '40px', height: '14px', borderRadius: '4px', backgroundColor: 'var(--bg-input)', animation: 'pulse 1.5s infinite ease-in-out', margin: '0 auto' }} />
                     </td>
@@ -529,23 +966,34 @@ export default function Inventario({ searchTerm = '' }: InventarioProps) {
                     <td style={{ padding: '12px 8px', textAlign: 'center' }}>
                       <div className="skeleton-pulse" style={{ width: '60px', height: '18px', borderRadius: '50px', backgroundColor: 'var(--bg-input)', animation: 'pulse 1.5s infinite ease-in-out', margin: '0 auto' }} />
                     </td>
-                    <td style={{ padding: '12px 8px', textAlign: 'center' }}>
-                      <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
-                        <div className="skeleton-pulse" style={{ width: '24px', height: '24px', borderRadius: '6px', backgroundColor: 'var(--bg-input)', animation: 'pulse 1.5s infinite ease-in-out' }} />
-                        <div className="skeleton-pulse" style={{ width: '24px', height: '24px', borderRadius: '6px', backgroundColor: 'var(--bg-input)', animation: 'pulse 1.5s infinite ease-in-out' }} />
-                      </div>
-                    </td>
+                    {isAdmin && (
+                      <td style={{ padding: '12px 8px', textAlign: 'center' }}>
+                        <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
+                          <div className="skeleton-pulse" style={{ width: '24px', height: '24px', borderRadius: '6px', backgroundColor: 'var(--bg-input)', animation: 'pulse 1.5s infinite ease-in-out' }} />
+                          <div className="skeleton-pulse" style={{ width: '24px', height: '24px', borderRadius: '6px', backgroundColor: 'var(--bg-input)', animation: 'pulse 1.5s infinite ease-in-out' }} />
+                        </div>
+                      </td>
+                    )}
                   </tr>
                 ))
               ) : filteredProducts.length === 0 ? (
                 <tr>
-                  <td colSpan={10} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-secondary)', fontWeight: 600 }}>
+                  <td colSpan={isAdmin ? 11 : 10} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-secondary)', fontWeight: 600 }}>
                     No se encontraron productos en el inventario.
                   </td>
                 </tr>
               ) : (
                 paginatedProducts.map((prod) => {
                   const isLowStock = prod.stock <= prod.minStock;
+                  const marginVal = prod.price > 0 ? ((prod.price - prod.cost) / prod.price) * 100 : 0;
+                  
+                  let marginStyle = { backgroundColor: 'rgba(20,184,166,0.1)', color: '#14b8a6', padding: '3px 8px', borderRadius: '12px', fontWeight: 800, fontSize: '11px' };
+                  if (marginVal < 0) {
+                    marginStyle = { backgroundColor: 'rgba(239,68,68,0.1)', color: '#ef4444', padding: '3px 8px', borderRadius: '12px', fontWeight: 800, fontSize: '11px' };
+                  } else if (marginVal <= 15) {
+                    marginStyle = { backgroundColor: 'rgba(245,158,11,0.1)', color: '#f59e0b', padding: '3px 8px', borderRadius: '12px', fontWeight: 800, fontSize: '11px' };
+                  }
+
                   return (
                     <tr key={prod.id} className="table-row-hover" style={{ borderBottom: '1px solid var(--border-color)' }}>
                       <td style={{ padding: '12px 8px', fontWeight: 800, color: 'var(--brand-primary)', fontFamily: 'monospace' }}>
@@ -571,6 +1019,11 @@ export default function Inventario({ searchTerm = '' }: InventarioProps) {
                       <td style={{ padding: '12px 8px', textAlign: 'right', fontWeight: 800, color: 'var(--brand-gold)' }}>
                         {formatVES(prod.price)}
                       </td>
+                      <td style={{ padding: '12px 8px', textAlign: 'right' }}>
+                        <span style={marginStyle}>
+                          {marginVal.toFixed(1)}%
+                        </span>
+                      </td>
                       <td style={{ padding: '12px 8px', textAlign: 'center', fontWeight: 800 }}>
                         {prod.stock} <span style={{ fontSize: '10px', color: 'var(--text-secondary)', fontWeight: 500 }}>{prod.unit}</span>
                       </td>
@@ -582,26 +1035,36 @@ export default function Inventario({ searchTerm = '' }: InventarioProps) {
                           {prod.stock === 0 ? 'Agotado' : isLowStock ? 'Bajo Stock' : 'Al día'}
                         </span>
                       </td>
-                      <td style={{ padding: '12px 8px', textAlign: 'center' }}>
-                        <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
-                          <button
-                            onClick={() => handleEditClick(prod)}
-                            className="btn-pill-dark"
-                            style={{ padding: '4px', borderRadius: '6px', minWidth: '24px', height: '24px', backgroundColor: 'var(--bg-input)' }}
-                            title="Editar Datos"
-                          >
-                            <Edit size={12} />
-                          </button>
-                          <button
-                            onClick={() => setShowDeleteConfirm(prod)}
-                            className="btn-pill-dark"
-                            style={{ padding: '4px', borderRadius: '6px', minWidth: '24px', height: '24px', backgroundColor: 'rgba(239,68,68,0.1)', color: '#ef4444' }}
-                            title="Eliminar del Catálogo"
-                          >
-                            <Trash2 size={12} />
-                          </button>
-                        </div>
-                      </td>
+                      {isAdmin && (
+                        <td style={{ padding: '12px 8px', textAlign: 'center' }}>
+                          <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
+                            <button
+                              onClick={() => handleKardexClick(prod)}
+                              className="btn-pill-dark"
+                              style={{ padding: '4px', borderRadius: '6px', minWidth: '24px', height: '24px', backgroundColor: 'var(--bg-input)' }}
+                              title="Ver Kárdex (Historial de Movimientos)"
+                            >
+                              <History size={12} />
+                            </button>
+                            <button
+                              onClick={() => handleEditClick(prod)}
+                              className="btn-pill-dark"
+                              style={{ padding: '4px', borderRadius: '6px', minWidth: '24px', height: '24px', backgroundColor: 'var(--bg-input)' }}
+                              title="Editar Datos"
+                            >
+                              <Edit size={12} />
+                            </button>
+                            <button
+                              onClick={() => setShowDeleteConfirm(prod)}
+                              className="btn-pill-dark"
+                              style={{ padding: '4px', borderRadius: '6px', minWidth: '24px', height: '24px', backgroundColor: 'rgba(239,68,68,0.1)', color: '#ef4444' }}
+                              title="Eliminar del Catálogo"
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          </div>
+                        </td>
+                      )}
                     </tr>
                   );
                 })
@@ -665,29 +1128,32 @@ export default function Inventario({ searchTerm = '' }: InventarioProps) {
 
       {/* MODAL 1: REGISTRO DE PRODUCTO A PANTALLA COMPLETA FLOTANTE (REEMPLAZA PANEL LATERAL) */}
       {showAddModal && (
-        <div style={{
+        <div className="modal-registration-backdrop" style={{
           position: 'fixed',
           top: 0, left: 0, right: 0, bottom: 0,
           backgroundColor: 'rgba(0, 0, 0, 0.65)',
           backdropFilter: 'blur(8px)',
           display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
+          justifyContent: isMobile ? 'flex-start' : 'center',
+          alignItems: isMobile ? 'stretch' : 'center',
+          flexDirection: isMobile ? 'column' : 'row',
           zIndex: 1500,
-          padding: '20px'
+          padding: isMobile ? 0 : '20px'
         }}>
           
-          <div className="widget animate-entrance" style={{
+          <div className={`widget ${!isMobile ? 'animate-entrance' : ''} modal-registration-content`} style={{
             width: '100%',
-            maxWidth: '620px',
+            maxWidth: isMobile ? '100%' : '620px',
+            padding: 0,
             backgroundColor: 'var(--bg-card)',
-            borderRadius: 'var(--card-radius)',
-            border: '1.5px solid var(--border-color)',
-            boxShadow: '0 20px 50px rgba(0, 0, 0, 0.4)',
+            borderRadius: isMobile ? 0 : 'var(--card-radius)',
+            border: isMobile ? 'none' : '1.5px solid var(--border-color)',
+            boxShadow: isMobile ? 'none' : '0 20px 50px rgba(0, 0, 0, 0.4)',
             overflow: 'hidden',
             display: 'flex',
             flexDirection: 'column',
-            maxHeight: '90vh'
+            height: isMobile ? '100dvh' : 'auto',
+            maxHeight: isMobile ? '100dvh' : '90vh'
           }}>
             
             {/* Header */}
@@ -707,8 +1173,8 @@ export default function Inventario({ searchTerm = '' }: InventarioProps) {
             </div>
 
             {/* Form */}
-            <form onSubmit={handleAddProduct} style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-              <div style={{ padding: '24px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '14px', fontSize: '13px' }}>
+            <form onSubmit={handleAddProduct} style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', flex: 1, minHeight: 0 }}>
+              <div style={{ padding: '24px', paddingBottom: isMobile ? '90px' : '24px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '14px', fontSize: '13px', flex: 1 }}>
                 
                 <div style={{ display: 'grid', gridTemplateColumns: '150px 1fr', gap: '12px' }}>
                   <div>
@@ -746,49 +1212,47 @@ export default function Inventario({ searchTerm = '' }: InventarioProps) {
                     <label style={{ fontWeight: 800, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', textTransform: 'uppercase', fontSize: '10px' }}>
                       Categoría
                     </label>
-                    <select 
+                    <CustomSelect 
                       value={newProduct.category}
-                      onChange={(e) => setNewProduct({ ...newProduct, category: e.target.value })}
-                      className="dropdown-select"
-                      style={{ width: '100%', padding: '10px', height: '40px', borderRadius: '12px' }}
-                    >
-                      <option value="General">General</option>
-                      <option value="Bebidas">Bebidas</option>
-                      <option value="Alimentos">Alimentos</option>
-                      <option value="Lácteos">Lácteos</option>
-                    </select>
+                      onChange={(val) => setNewProduct({ ...newProduct, category: val })}
+                      options={[
+                        { value: 'General', label: 'General' },
+                        { value: 'Bebidas', label: 'Bebidas' },
+                        { value: 'Alimentos', label: 'Alimentos' },
+                        { value: 'Lácteos', label: 'Lácteos' }
+                      ]}
+                      style={{ width: '100%' }}
+                    />
                   </div>
                   <div>
                     <label style={{ fontWeight: 800, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', textTransform: 'uppercase', fontSize: '10px' }}>
                       Unidad de Medida
                     </label>
-                    <select 
+                    <CustomSelect 
                       value={newProduct.unit}
-                      onChange={(e) => setNewProduct({ ...newProduct, unit: e.target.value })}
-                      className="dropdown-select"
-                      style={{ width: '100%', padding: '10px', height: '40px', borderRadius: '12px' }}
-                    >
-                      <option value="unidades">Unidades (u.)</option>
-                      <option value="kg">Kilogramos (kg)</option>
-                      <option value="litros">Litros (L)</option>
-                      <option value="cajas">Cajas</option>
-                    </select>
+                      onChange={(val) => setNewProduct({ ...newProduct, unit: val })}
+                      options={[
+                        { value: 'unidades', label: 'Unidades (u.)' },
+                        { value: 'kg', label: 'Kilogramos (kg)' },
+                        { value: 'litros', label: 'Litros (L)' },
+                        { value: 'cajas', label: 'Cajas' }
+                      ]}
+                      style={{ width: '100%' }}
+                    />
                   </div>
                   <div>
                     <label style={{ fontWeight: 800, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', textTransform: 'uppercase', fontSize: '10px' }}>
                       Proveedor Relacionado
                     </label>
-                    <select 
+                    <CustomSelect 
                       value={newProduct.supplierName}
-                      onChange={(e) => setNewProduct({ ...newProduct, supplierName: e.target.value })}
-                      className="dropdown-select"
-                      style={{ width: '100%', padding: '10px', height: '40px', borderRadius: '12px' }}
-                    >
-                      <option value="Proveedor General">Proveedor General</option>
-                      {suppliersList.map(s => (
-                        <option key={s.rif} value={s.companyName}>{s.companyName}</option>
-                      ))}
-                    </select>
+                      onChange={(val) => setNewProduct({ ...newProduct, supplierName: val })}
+                      options={[
+                        { value: 'Proveedor General', label: 'Proveedor General' },
+                        ...suppliersList.map(s => ({ value: s.companyName, label: s.companyName }))
+                      ]}
+                      style={{ width: '100%' }}
+                    />
                   </div>
                 </div>
 
@@ -868,12 +1332,11 @@ export default function Inventario({ searchTerm = '' }: InventarioProps) {
                     <label style={{ fontWeight: 800, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', textTransform: 'uppercase', fontSize: '10px' }}>
                       Fecha de Vencimiento (Exp.)
                     </label>
-                    <input 
-                      type="date" 
-                      value={newProduct.expiryDate}
-                      onChange={(e) => setNewProduct({ ...newProduct, expiryDate: e.target.value })}
-                      className="search-input"
-                      style={{ padding: '10px 12px', borderRadius: '12px', border: '1.5px solid var(--border-color)', width: '100%', height: '40px' }}
+                    <CustomDatePicker 
+                      value={newProduct.expiryDate || ''}
+                      onChange={(val) => setNewProduct({ ...newProduct, expiryDate: val })}
+                      placeholder="Sin fecha de vencimiento"
+                      style={{ width: '100%' }}
                     />
                   </div>
                   <div>
@@ -894,7 +1357,15 @@ export default function Inventario({ searchTerm = '' }: InventarioProps) {
               </div>
 
               {/* Footer */}
-              <div style={{ padding: '16px 24px', borderTop: '1.5px solid var(--border-color)', display: 'flex', justifyContent: 'flex-end', gap: '10px', backgroundColor: 'var(--bg-input)' }}>
+              <div style={{
+                padding: '16px 24px',
+                borderTop: '1.5px solid var(--border-color)',
+                display: 'flex',
+                justifyContent: 'flex-end',
+                gap: '10px',
+                backgroundColor: 'var(--bg-input)',
+                ...(isMobile ? { position: 'fixed' as const, bottom: 0, left: 0, right: 0, zIndex: 10 } : {})
+              }}>
                 <button
                   type="button"
                   onClick={() => setShowAddModal(false)}
@@ -920,29 +1391,32 @@ export default function Inventario({ searchTerm = '' }: InventarioProps) {
 
       {/* MODAL 4: EDICIÓN DE PRODUCTO CON AUDITORÍA DE STOCK */}
       {showEditModal && editingProduct && (
-        <div style={{
+        <div className="modal-registration-backdrop" style={{
           position: 'fixed',
           top: 0, left: 0, right: 0, bottom: 0,
           backgroundColor: 'rgba(0, 0, 0, 0.65)',
           backdropFilter: 'blur(8px)',
           display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
+          justifyContent: isMobile ? 'flex-start' : 'center',
+          alignItems: isMobile ? 'stretch' : 'center',
+          flexDirection: isMobile ? 'column' : 'row',
           zIndex: 1500,
-          padding: '20px'
+          padding: isMobile ? 0 : '20px'
         }}>
           
-          <div className="widget animate-entrance" style={{
+          <div className={`widget ${!isMobile ? 'animate-entrance' : ''} modal-registration-content`} style={{
             width: '100%',
-            maxWidth: '620px',
+            maxWidth: isMobile ? '100%' : '620px',
+            padding: 0,
             backgroundColor: 'var(--bg-card)',
-            borderRadius: 'var(--card-radius)',
-            border: '1.5px solid var(--border-color)',
-            boxShadow: '0 20px 50px rgba(0, 0, 0, 0.4)',
+            borderRadius: isMobile ? 0 : 'var(--card-radius)',
+            border: isMobile ? 'none' : '1.5px solid var(--border-color)',
+            boxShadow: isMobile ? 'none' : '0 20px 50px rgba(0, 0, 0, 0.4)',
             overflow: 'hidden',
             display: 'flex',
             flexDirection: 'column',
-            maxHeight: '90vh'
+            height: isMobile ? '100dvh' : 'auto',
+            maxHeight: isMobile ? '100dvh' : '90vh'
           }}>
             
             {/* Header */}
@@ -962,8 +1436,8 @@ export default function Inventario({ searchTerm = '' }: InventarioProps) {
             </div>
 
             {/* Form */}
-            <form onSubmit={handleEditProduct} style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-              <div style={{ padding: '24px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '14px', fontSize: '13px' }}>
+            <form onSubmit={handleEditProduct} style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', flex: 1, minHeight: 0 }}>
+              <div style={{ padding: '24px', paddingBottom: isMobile ? '90px' : '24px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '14px', fontSize: '13px', flex: 1 }}>
                 
                 <div style={{ display: 'grid', gridTemplateColumns: '150px 1fr', gap: '12px' }}>
                   <div>
@@ -999,65 +1473,62 @@ export default function Inventario({ searchTerm = '' }: InventarioProps) {
                     <label style={{ fontWeight: 800, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', textTransform: 'uppercase', fontSize: '10px' }}>
                       Categoría
                     </label>
-                    <select 
+                    <CustomSelect 
                       value={editForm.category}
-                      onChange={(e) => setEditForm({ ...editForm, category: e.target.value })}
-                      className="dropdown-select"
-                      style={{ width: '100%', padding: '10px', height: '40px', borderRadius: '12px' }}
-                    >
-                      <option value="General">General</option>
-                      <option value="Bebidas">Bebidas</option>
-                      <option value="Alimentos">Alimentos</option>
-                      <option value="Lácteos">Lácteos</option>
-                    </select>
+                      onChange={(val) => setEditForm({ ...editForm, category: val })}
+                      options={[
+                        { value: 'General', label: 'General' },
+                        { value: 'Bebidas', label: 'Bebidas' },
+                        { value: 'Alimentos', label: 'Alimentos' },
+                        { value: 'Lácteos', label: 'Lácteos' }
+                      ]}
+                      style={{ width: '100%' }}
+                    />
                   </div>
                   <div>
                     <label style={{ fontWeight: 800, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', textTransform: 'uppercase', fontSize: '10px' }}>
                       Unidad de Medida
                     </label>
-                    <select 
+                    <CustomSelect 
                       value={editForm.unit}
-                      onChange={(e) => setEditForm({ ...editForm, unit: e.target.value })}
-                      className="dropdown-select"
-                      style={{ width: '100%', padding: '10px', height: '40px', borderRadius: '12px' }}
-                    >
-                      <option value="unidades">Unidades (u.)</option>
-                      <option value="kg">Kilogramos (kg)</option>
-                      <option value="litros">Litros (L)</option>
-                      <option value="cajas">Cajas</option>
-                    </select>
+                      onChange={(val) => setEditForm({ ...editForm, unit: val })}
+                      options={[
+                        { value: 'unidades', label: 'Unidades (u.)' },
+                        { value: 'kg', label: 'Kilogramos (kg)' },
+                        { value: 'litros', label: 'Litros (L)' },
+                        { value: 'cajas', label: 'Cajas' }
+                      ]}
+                      style={{ width: '100%' }}
+                    />
                   </div>
                   <div>
                     <label style={{ fontWeight: 800, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', textTransform: 'uppercase', fontSize: '10px' }}>
                       Proveedor Relacionado
                     </label>
-                    <select 
+                    <CustomSelect 
                       value={editForm.supplierName}
-                      onChange={(e) => setEditForm({ ...editForm, supplierName: e.target.value })}
-                      className="dropdown-select"
-                      style={{ width: '100%', padding: '10px', height: '40px', borderRadius: '12px' }}
-                    >
-                      <option value="Proveedor General">Proveedor General</option>
-                      {suppliersList.map(s => (
-                        <option key={s.rif} value={s.companyName}>{s.companyName}</option>
-                      ))}
-                    </select>
+                      onChange={(val) => setEditForm({ ...editForm, supplierName: val })}
+                      options={[
+                        { value: 'Proveedor General', label: 'Proveedor General' },
+                        ...suppliersList.map(s => ({ value: s.companyName, label: s.companyName }))
+                      ]}
+                      style={{ width: '100%' }}
+                    />
                   </div>
                 </div>
 
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px' }}>
                   <div>
                     <label style={{ fontWeight: 800, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', textTransform: 'uppercase', fontSize: '10px' }}>
-                      Stock *
+                      Stock Total (Lotes)
                     </label>
                     <input 
                       type="number" 
                       value={editForm.stock}
-                      onChange={(e) => setEditForm({ ...editForm, stock: e.target.value })}
+                      disabled
                       placeholder="0"
                       className="search-input"
-                      style={{ padding: '10px 12px', borderRadius: '12px', border: '1.5px solid var(--border-color)', width: '100%' }}
-                      required
+                      style={{ padding: '10px 12px', borderRadius: '12px', border: '1.5px solid var(--border-color)', width: '100%', backgroundColor: 'var(--bg-primary)', cursor: 'not-allowed', color: 'var(--text-muted)', fontWeight: 'bold' }}
                     />
                   </div>
                   <div>
@@ -1134,18 +1605,18 @@ export default function Inventario({ searchTerm = '' }: InventarioProps) {
                         <label style={{ fontWeight: 800, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', textTransform: 'uppercase', fontSize: '9px' }}>
                           Motivo del Ajuste *
                         </label>
-                        <select 
+                        <CustomSelect 
                           value={editForm.stockReason}
-                          onChange={(e) => setEditForm({ ...editForm, stockReason: e.target.value })}
-                          className="dropdown-select"
-                          style={{ width: '100%', padding: '10px', height: '40px', borderRadius: '12px' }}
-                        >
-                          <option value="Conteo Físico">Ajuste por Conteo Físico</option>
-                          <option value="Merma">Merma (Deterioro / Expiración)</option>
-                          <option value="Robo">Robo / Pérdida no Justificada</option>
-                          <option value="Devolución">Devolución de Cliente</option>
-                          <option value="Entrada de Compra">Entrada de Mercancía</option>
-                        </select>
+                          onChange={(val) => setEditForm({ ...editForm, stockReason: val })}
+                          options={[
+                            { value: 'Conteo Físico', label: 'Ajuste por Conteo Físico' },
+                            { value: 'Merma', label: 'Merma (Deterioro / Expiración)' },
+                            { value: 'Robo', label: 'Robo / Pérdida no Justificada' },
+                            { value: 'Devolución', label: 'Devolución de Cliente' },
+                            { value: 'Entrada de Compra', label: 'Entrada de Mercancía' }
+                          ]}
+                          style={{ width: '100%' }}
+                        />
                       </div>
                       <div>
                         <label style={{ fontWeight: 800, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', textTransform: 'uppercase', fontSize: '9px' }}>
@@ -1165,17 +1636,101 @@ export default function Inventario({ searchTerm = '' }: InventarioProps) {
                   </div>
                 )}
 
+                {/* CONTROL DE LOTES */}
+                <div style={{
+                  border: '1.5px solid var(--border-color)',
+                  borderRadius: '16px',
+                  padding: '16px',
+                  backgroundColor: 'var(--bg-primary)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '12px',
+                  marginTop: '4px'
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontWeight: 800, fontSize: '12px', color: 'var(--brand-primary)', textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <Sparkles size={14} style={{ color: 'var(--brand-gold)' }} />
+                      Control de Lotes y Expiración (FIFO)
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleAddBatch}
+                      className="btn-yellow"
+                      style={{ padding: '4px 10px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px', borderRadius: '8px' }}
+                    >
+                      <Plus size={12} /> Agregar Lote
+                    </button>
+                  </div>
+                  
+                  <div style={{ maxHeight: '180px', overflowY: 'auto', border: '1px solid var(--border-color)', borderRadius: '12px' }}>
+                    <table style={{ width: '100%', fontSize: '11.5px', borderCollapse: 'collapse' }}>
+                      <thead>
+                        <tr style={{ color: 'var(--text-secondary)', textAlign: 'left', borderBottom: '1.5px solid var(--border-color)', backgroundColor: 'var(--bg-input)' }}>
+                          <th style={{ padding: '8px 12px', fontWeight: 800 }}>CÓDIGO LOTE</th>
+                          <th style={{ padding: '8px 12px', fontWeight: 800 }}>EXPIRACIÓN</th>
+                          <th style={{ padding: '8px 12px', fontWeight: 800, textAlign: 'right' }}>CANTIDAD (STOCK)</th>
+                          <th style={{ padding: '8px 12px', fontWeight: 800, textAlign: 'center' }}>ELIMINAR</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {editBatches.map((batch, index) => (
+                          <tr key={index} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                            <td style={{ padding: '6px 12px' }}>
+                              <input
+                                type="text"
+                                value={batch.loteCode}
+                                onChange={(e) => handleBatchChange(index, 'loteCode', e.target.value.toUpperCase())}
+                                className="search-input"
+                                style={{ padding: '6px 10px', borderRadius: '8px', fontSize: '11px', border: '1px solid var(--border-color)', width: '100%' }}
+                                required
+                              />
+                            </td>
+                            <td style={{ padding: '6px 12px' }}>
+                              <CustomDatePicker
+                                value={batch.expiryDate === 'N/A' ? '' : batch.expiryDate}
+                                onChange={(val) => handleBatchChange(index, 'expiryDate', val || 'N/A')}
+                                placeholder="Sin Exp."
+                                style={{ width: '100%' }}
+                              />
+                            </td>
+                            <td style={{ padding: '6px 12px', textAlign: 'right' }}>
+                              <input
+                                type="number"
+                                step="any"
+                                value={batch.stock}
+                                onChange={(e) => handleBatchChange(index, 'stock', parseFloat(e.target.value) || 0)}
+                                className="search-input"
+                                style={{ padding: '6px 10px', borderRadius: '8px', fontSize: '11px', border: '1px solid var(--border-color)', width: '85px', textAlign: 'right' }}
+                                required
+                              />
+                            </td>
+                            <td style={{ padding: '6px 12px', textAlign: 'center' }}>
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveBatch(index)}
+                                style={{ border: 'none', backgroundColor: 'transparent', color: '#ef4444', cursor: 'pointer', padding: '4px' }}
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                   <div>
                     <label style={{ fontWeight: 800, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', textTransform: 'uppercase', fontSize: '10px' }}>
-                      Fecha de Vencimiento (Exp.)
+                      Fecha de Vencimiento Más Próxima
                     </label>
                     <input 
-                      type="date" 
-                      value={editForm.expiryDate}
-                      onChange={(e) => setEditForm({ ...editForm, expiryDate: e.target.value })}
+                      type="text" 
+                      value={editForm.expiryDate || 'N/A'}
+                      disabled
                       className="search-input"
-                      style={{ padding: '10px 12px', borderRadius: '12px', border: '1.5px solid var(--border-color)', width: '100%', height: '40px' }}
+                      style={{ padding: '10px 12px', borderRadius: '12px', border: '1.5px solid var(--border-color)', width: '100%', backgroundColor: 'var(--bg-primary)', cursor: 'not-allowed', color: 'var(--text-muted)' }}
                     />
                   </div>
                   <div>
@@ -1196,7 +1751,15 @@ export default function Inventario({ searchTerm = '' }: InventarioProps) {
               </div>
 
               {/* Footer */}
-              <div style={{ padding: '16px 24px', borderTop: '1.5px solid var(--border-color)', display: 'flex', justifyContent: 'flex-end', gap: '10px', backgroundColor: 'var(--bg-input)' }}>
+              <div style={{
+                padding: '16px 24px',
+                borderTop: '1.5px solid var(--border-color)',
+                display: 'flex',
+                justifyContent: 'flex-end',
+                gap: '10px',
+                backgroundColor: 'var(--bg-input)',
+                ...(isMobile ? { position: 'fixed' as const, bottom: 0, left: 0, right: 0, zIndex: 10 } : {})
+              }}>
                 <button
                   type="button"
                   onClick={() => { setShowEditModal(false); setEditingProduct(null); }}
@@ -1339,6 +1902,305 @@ export default function Inventario({ searchTerm = '' }: InventarioProps) {
 
           </div>
 
+        </div>
+      )}
+
+      {/* MODAL 5: KÁRDEX DE PRODUCTO */}
+      {showKardexModal && kardexProduct && (
+        <div style={{
+          position: 'fixed',
+          top: 0, left: 0, right: 0, bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.65)',
+          backdropFilter: 'blur(8px)',
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          zIndex: 1500,
+          padding: '20px'
+        }}>
+          <div className="widget animate-entrance" style={{
+            width: '100%',
+            maxWidth: '750px',
+            backgroundColor: 'var(--bg-card)',
+            borderRadius: 'var(--card-radius)',
+            border: '1.5px solid var(--border-color)',
+            boxShadow: '0 20px 50px rgba(0, 0, 0, 0.4)',
+            overflow: 'hidden',
+            display: 'flex',
+            flexDirection: 'column',
+            maxHeight: '85vh'
+          }}>
+            {/* Header */}
+            <div style={{ padding: '20px 24px', borderBottom: '1.5px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <History size={18} style={{ color: 'var(--brand-primary)' }} />
+                <h4 style={{ fontSize: '16px', fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>
+                  Kárdex (Historial de Movimientos): {kardexProduct.name}
+                </h4>
+              </div>
+              <button 
+                onClick={() => { setShowKardexModal(false); setKardexProduct(null); }}
+                style={{ border: 'none', backgroundColor: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer', padding: '4px' }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div style={{ padding: '24px', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'var(--bg-primary)', padding: '12px 16px', borderRadius: '12px' }}>
+                <div>
+                  <span style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 800 }}>Código de Barras</span>
+                  <div style={{ fontSize: '14px', fontWeight: 800, color: 'var(--text-primary)' }}>{kardexProduct.code}</div>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <span style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 800 }}>Existencia Actual</span>
+                  <div style={{ fontSize: '14px', fontWeight: 800, color: 'var(--brand-primary)' }}>{kardexProduct.stock} {kardexProduct.unit}</div>
+                </div>
+              </div>
+
+              <div style={{ overflowX: 'auto', border: '1px solid var(--border-color)', borderRadius: '12px' }}>
+                <table style={{ width: '100%', fontSize: '12px', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ color: 'var(--text-secondary)', textAlign: 'left', borderBottom: '1.5px solid var(--border-color)', backgroundColor: 'var(--bg-input)' }}>
+                      <th style={{ padding: '10px 12px', fontWeight: 800 }}>FECHA / HORA</th>
+                      <th style={{ padding: '10px 12px', fontWeight: 800 }}>TIPO</th>
+                      <th style={{ padding: '10px 12px', fontWeight: 800 }}>REFERENCIA</th>
+                      <th style={{ padding: '10px 12px', fontWeight: 800, textAlign: 'right' }}>CANT.</th>
+                      <th style={{ padding: '10px 12px', fontWeight: 800, textAlign: 'right' }}>RESULTANTE</th>
+                      <th style={{ padding: '10px 12px', fontWeight: 800 }}>USUARIO</th>
+                      <th style={{ padding: '10px 12px', fontWeight: 800 }}>DETALLE / MOTIVO</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {kardexMovements.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} style={{ textAlign: 'center', padding: '30px', color: 'var(--text-secondary)' }}>
+                          No hay movimientos registrados para este producto.
+                        </td>
+                      </tr>
+                    ) : (
+                      kardexMovements.map((mov, index) => {
+                        const isNegative = mov.qtyChange < 0;
+                        const isCreation = mov.type === 'CREACIÓN';
+                        return (
+                          <tr key={index} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                            <td style={{ padding: '10px 12px', whiteSpace: 'nowrap', fontFamily: 'monospace' }}>
+                              {new Date(mov.date).toLocaleString()}
+                            </td>
+                            <td style={{ padding: '10px 12px' }}>
+                              <span className={`status-badge ${isCreation ? 'delivered' : isNegative ? 'shipped' : 'pickup'}`} style={{ fontSize: '10px' }}>
+                                {mov.type}
+                              </span>
+                            </td>
+                            <td style={{ padding: '10px 12px', fontFamily: 'monospace' }}>{mov.reference}</td>
+                            <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 800, color: isNegative ? '#ef4444' : '#22c55e' }}>
+                              {isNegative ? '' : '+'}{mov.qtyChange}
+                            </td>
+                            <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 800 }}>{mov.resultStock}</td>
+                            <td style={{ padding: '10px 12px', color: 'var(--text-secondary)' }}>{mov.user}</td>
+                            <td style={{ padding: '10px 12px', color: 'var(--text-muted)' }}>{mov.justification}</td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border-color)', display: 'flex', justifyContent: 'flex-end', backgroundColor: 'var(--bg-input)' }}>
+              <button
+                onClick={() => { setShowKardexModal(false); setKardexProduct(null); }}
+                className="btn-yellow"
+                style={{ padding: '8px 20px', borderRadius: 'var(--button-radius)' }}
+              >
+                Cerrar Historial
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 6: CARGA MASIVA DE INVENTARIO */}
+      {showBulkModal && (
+        <div style={{
+          position: 'fixed',
+          top: 0, left: 0, right: 0, bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.65)',
+          backdropFilter: 'blur(8px)',
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          zIndex: 1500,
+          padding: '20px'
+        }}>
+          <div className="widget animate-entrance" style={{
+            width: '100%',
+            maxWidth: '680px',
+            backgroundColor: 'var(--bg-card)',
+            borderRadius: 'var(--card-radius)',
+            border: '1.5px solid var(--border-color)',
+            boxShadow: '0 20px 50px rgba(0, 0, 0, 0.4)',
+            overflow: 'hidden',
+            display: 'flex',
+            flexDirection: 'column',
+            maxHeight: '85vh'
+          }}>
+            {/* Header */}
+            <div style={{ padding: '20px 24px', borderBottom: '1.5px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Sparkles size={18} style={{ color: 'var(--brand-primary)' }} />
+                <h4 style={{ fontSize: '16px', fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>
+                  Carga Masiva de Inventario (CSV)
+                </h4>
+              </div>
+              <button 
+                onClick={() => { setShowBulkModal(false); setCsvPreview([]); setCsvErrors([]); }}
+                style={{ border: 'none', backgroundColor: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer', padding: '4px' }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div style={{ padding: '24px', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: 0, lineHeight: '1.5' }}>
+                Exporte la plantilla del catálogo de productos actual o cargue un archivo CSV formateado para actualizar o añadir productos de manera masiva.
+              </p>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <button
+                  onClick={handleExportCSV}
+                  className="btn-pill-dark"
+                  style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', padding: '16px', borderRadius: '12px', border: '1.5px dashed var(--border-color)', cursor: 'pointer', backgroundColor: 'var(--bg-primary)' }}
+                >
+                  <ShoppingBag size={20} style={{ color: 'var(--brand-primary)' }} />
+                  <span style={{ fontSize: '13px', fontWeight: 800, color: 'var(--text-primary)' }}>Exportar Catálogo Actual</span>
+                  <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Descarga archivo inventario.csv</span>
+                </button>
+
+                <label
+                  className="btn-pill-dark"
+                  style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', padding: '16px', borderRadius: '12px', border: '1.5px dashed var(--brand-gold)', cursor: 'pointer', backgroundColor: 'var(--bg-primary)', textAlign: 'center' }}
+                >
+                  <RefreshCw size={20} style={{ color: 'var(--brand-gold)' }} />
+                  <span style={{ fontSize: '13px', fontWeight: 800, color: 'var(--text-primary)' }}>Seleccionar archivo CSV</span>
+                  <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Carga o arrastra un .csv</span>
+                  <input
+                    type="file"
+                    accept=".csv"
+                    onChange={handleImportCSV}
+                    style={{ display: 'none' }}
+                  />
+                </label>
+              </div>
+
+              {/* Preview / Errors Section */}
+              {(csvPreview.length > 0 || csvErrors.length > 0) && (
+                <div style={{ border: '1.5px solid var(--border-color)', borderRadius: '16px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  <strong style={{ fontSize: '12px', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
+                    Resultados del Diagnóstico Local
+                  </strong>
+
+                  {csvErrors.length > 0 && (
+                    <div style={{ backgroundColor: 'rgba(239, 68, 68, 0.05)', border: '1px solid rgba(239, 68, 68, 0.25)', borderRadius: '12px', padding: '12px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#ef4444', fontWeight: 700, fontSize: '12px' }}>
+                        <AlertCircle size={14} />
+                        <span>Errores Encontrados en Archivo ({csvErrors.length}):</span>
+                      </div>
+                      <ul style={{ margin: 0, paddingLeft: '20px', fontSize: '11.5px', color: 'var(--text-secondary)', maxHeight: '100px', overflowY: 'auto' }}>
+                        {csvErrors.map((err, idx) => (
+                          <li key={idx} style={{ marginBottom: '2px' }}>{err}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {csvPreview.length > 0 && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px' }}>
+                        <div style={{ backgroundColor: 'var(--bg-input)', padding: '10px', borderRadius: '10px', textAlign: 'center' }}>
+                          <span style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Inserciones</span>
+                          <div style={{ fontSize: '15px', fontWeight: 800, color: '#22c55e' }}>+{csvStats.newProds}</div>
+                        </div>
+                        <div style={{ backgroundColor: 'var(--bg-input)', padding: '10px', borderRadius: '10px', textAlign: 'center' }}>
+                          <span style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Actualizaciones</span>
+                          <div style={{ fontSize: '15px', fontWeight: 800, color: 'var(--brand-primary)' }}>{csvStats.updateProds}</div>
+                        </div>
+                        <div style={{ backgroundColor: 'var(--bg-input)', padding: '10px', borderRadius: '10px', textAlign: 'center' }}>
+                          <span style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Total Filas</span>
+                          <div style={{ fontSize: '15px', fontWeight: 800, color: 'var(--text-primary)' }}>{csvStats.total}</div>
+                        </div>
+                      </div>
+
+                      {csvErrors.length === 0 && (
+                        <div style={{ backgroundColor: 'rgba(34, 197, 94, 0.05)', border: '1px solid rgba(34, 197, 94, 0.25)', borderRadius: '12px', padding: '12px', display: 'flex', alignItems: 'center', gap: '8px', color: '#22c55e', fontSize: '12px', fontWeight: 700 }}>
+                          <Check size={16} />
+                          <span>Archivo validado correctamente. ¡Listo para procesar importación local!</span>
+                        </div>
+                      )}
+
+                      {/* Sub-tabla visual previsualización */}
+                      <div style={{ maxHeight: '150px', overflowY: 'auto', border: '1px solid var(--border-color)', borderRadius: '10px' }}>
+                        <table style={{ width: '100%', fontSize: '11px', borderCollapse: 'collapse' }}>
+                          <thead>
+                            <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--border-color)', backgroundColor: 'var(--bg-input)', color: 'var(--text-secondary)' }}>
+                              <th style={{ padding: '6px 8px' }}>CÓDIGO</th>
+                              <th style={{ padding: '6px 8px' }}>NOMBRE</th>
+                              <th style={{ padding: '6px 8px', textAlign: 'right' }}>COSTO</th>
+                              <th style={{ padding: '6px 8px', textAlign: 'right' }}>PRECIO</th>
+                              <th style={{ padding: '6px 8px', textAlign: 'center' }}>CANT.</th>
+                              <th style={{ padding: '6px 8px', textAlign: 'center' }}>VENCE</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {csvPreview.slice(0, 10).map((row, idx) => (
+                              <tr key={idx} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                                <td style={{ padding: '6px 8px', fontFamily: 'monospace' }}>{row.code}</td>
+                                <td style={{ padding: '6px 8px', fontWeight: 700 }}>{row.name}</td>
+                                <td style={{ padding: '6px 8px', textAlign: 'right' }}>${row.cost}</td>
+                                <td style={{ padding: '6px 8px', textAlign: 'right' }}>${row.price}</td>
+                                <td style={{ padding: '6px 8px', textAlign: 'center' }}>{row.stock}</td>
+                                <td style={{ padding: '6px 8px', textAlign: 'center', fontFamily: 'monospace' }}>{row.expiryDate}</td>
+                              </tr>
+                            ))}
+                            {csvPreview.length > 10 && (
+                              <tr>
+                                <td colSpan={6} style={{ textAlign: 'center', padding: '6px', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                                  ... y {csvPreview.length - 10} filas más.
+                                </td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border-color)', display: 'flex', justifyContent: 'flex-end', gap: '10px', backgroundColor: 'var(--bg-input)' }}>
+              <button
+                onClick={() => { setShowBulkModal(false); setCsvPreview([]); setCsvErrors([]); }}
+                className="btn-pill-dark"
+                style={{ padding: '8px 16px', borderRadius: 'var(--button-radius)', backgroundColor: 'var(--bg-card)' }}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleConfirmImport}
+                disabled={csvPreview.length === 0 || csvErrors.length > 0}
+                className="btn-yellow"
+                style={{ padding: '8px 20px', borderRadius: 'var(--button-radius)', cursor: (csvPreview.length === 0 || csvErrors.length > 0) ? 'not-allowed' : 'pointer', opacity: (csvPreview.length === 0 || csvErrors.length > 0) ? 0.45 : 1 }}
+              >
+                Confirmar Importación
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

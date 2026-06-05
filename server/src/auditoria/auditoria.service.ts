@@ -25,24 +25,30 @@ export class AuditoriaService {
   }
 
   // 2. Obtención de registros para paneles de auditoría (Auditor o Administrador)
-  async getLogs(role: string) {
+  async getLogs(role: string, skip = 0, take = 100) {
     // Protección estricta contra accesos no autorizados a logs sensibles
     if (role !== 'ADMIN' && role !== 'AUDITOR') {
       throw new UnauthorizedException('No cuenta con privilegios para consultar la Bitácora.');
     }
 
-    return this.prisma.auditLog.findMany({
-      orderBy: { createdAt: 'desc' },
-      take: 100, // Retorna los últimos 100 registros
-      include: {
-        user: {
-          select: {
-            name: true,
-            email: true,
-            role: true
+    const [logs, total] = await Promise.all([
+      this.prisma.auditLog.findMany({
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take,
+        include: {
+          user: {
+            select: {
+              name: true,
+              email: true,
+              role: true
+            }
           }
         }
-      }
-    });
+      }),
+      this.prisma.auditLog.count()
+    ]);
+
+    return { logs, total, skip, take };
   }
 }

@@ -1,10 +1,11 @@
 datasource db {
   provider = "sqlite"
-  url      = "file:./dev.db"
+  url      = env("DATABASE_URL")
 }
 
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  binaryTargets   = ["native", "linux-musl"]
 }
 
 // 1. Usuarios y Empleados (Login/Registro/Nómina)
@@ -33,8 +34,9 @@ model Product {
   category    String
   price       Float    // Precio de venta
   cost        Float    // Costo de compra
-  stock       Int      @default(0)
-  minStock    Int      @default(5) // Alerta de reposición
+  stock       Float    @default(0)
+  minStock    Float    @default(5) // Alerta de reposición
+  batches     String?  // Lotes serializados en JSON
   version     Int      @default(1) // Control de concurrencia y replicación RxDB
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -42,16 +44,24 @@ model Product {
   // Relaciones
   saleItems     SaleItem[]
   purchaseItems PurchaseItem[]
+
+  @@index([category])
 }
 
 // 3. Proveedores
 model Supplier {
-  id        String   @id @default(uuid())
-  name      String
-  contact   String?
-  phone     String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id           String   @id @default(uuid())
+  name         String   // Razón social / companyName
+  contact      String?  // Nombre de contacto / contactName
+  phone        String?
+  rif          String?  // RIF / ID fiscal
+  email        String?
+  address      String?
+  category     String   @default("General")
+  paymentTerms String   @default("Contado")
+  status       String   @default("Activo")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   // Relaciones
   purchases Purchase[]
@@ -86,18 +96,24 @@ model Sale {
   cashier   User       @relation(fields: [cashierId], references: [id], onDelete: Restrict)
   client    Client?    @relation(fields: [clientId], references: [id], onDelete: SetNull)
   saleItems SaleItem[]
+
+  @@index([cashierId])
+  @@index([createdAt])
 }
 
 model SaleItem {
   id        String @id @default(uuid())
   saleId    String
   productId String
-  quantity  Int
+  quantity  Float
   price     Float  // Precio de venta histórico
 
   // Relaciones
   sale    Sale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
   product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@index([saleId])
+  @@index([productId])
 }
 
 // 6. Compras y Abastecimiento (OCR)
@@ -114,18 +130,23 @@ model Purchase {
   // Relaciones
   supplier      Supplier       @relation(fields: [supplierId], references: [id], onDelete: Restrict)
   purchaseItems PurchaseItem[]
+
+  @@index([supplierId])
+  @@index([createdAt])
 }
 
 model PurchaseItem {
   id         String @id @default(uuid())
   purchaseId String
   productId  String
-  quantity   Int
+  quantity   Float
   cost       Float  // Costo unitario histórico
 
   // Relaciones
   purchase Purchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
   product  Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@index([productId])
 }
 
 // 7. Nómina de Empleados
@@ -144,6 +165,8 @@ model Payroll {
 
   // Relaciones
   employee User @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+
+  @@index([employeeId])
 }
 
 // 8. Tokens de Refresco para Sesiones Seguras
@@ -172,4 +195,8 @@ model AuditLog {
 
   // Relaciones
   user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
 }

@@ -49,7 +49,7 @@ export class PayrollService {
     bonuses?: number;
     deductions?: number;
     paymentDate: string;
-  }) {
+  }, ipAddress = 'unknown', userAgent = 'Unknown') {
     const bonuses = dto.bonuses || 0;
     const deductions = dto.deductions || 0;
     const totalPaid = dto.baseSalary + bonuses - deductions;
@@ -98,8 +98,8 @@ export class PayrollService {
         totalPaid,
         period: dto.paymentDate
       },
-      '127.0.0.1',
-      'StockMasterPro Admin Console'
+      ipAddress,
+      userAgent
     );
 
     return payroll;

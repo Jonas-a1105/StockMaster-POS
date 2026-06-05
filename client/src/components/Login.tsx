@@ -7,15 +7,15 @@ import logoImg from '../assets/logo.png';
 interface LoginProps {
   onLoginSuccess: (user: any) => void;
   onNavigateToRegister: () => void;
+  onBackToLanding?: () => void;
 }
 
-export default function Login({ onLoginSuccess, onNavigateToRegister }: LoginProps) {
+export default function Login({ onLoginSuccess, onNavigateToRegister, onBackToLanding }: LoginProps) {
   // Estados Interactivos
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [pin, setPin] = useState('');
   const [loginMethod, setLoginMethod] = useState<'password' | 'pin'>('password');
-  const [isDark, setIsDark] = useState(true);
   const [onlineStatus, setOnlineStatus] = useState(isOnline());
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
@@ -35,18 +35,6 @@ export default function Login({ onLoginSuccess, onNavigateToRegister }: LoginPro
       window.removeEventListener('offline', handleOffline);
     };
   }, []);
-
-  // Sincroniza clases del tema en el body para modo oscuro/claro
-  useEffect(() => {
-    const body = document.body;
-    if (isDark) {
-      body.classList.add('dark-theme');
-      body.classList.remove('light-theme');
-    } else {
-      body.classList.add('light-theme');
-      body.classList.remove('dark-theme');
-    }
-  }, [isDark]);
 
   // Manejador del Teclado Numérico Tactil (PIN Pad)
   const handleNumpadPress = (num: string) => {
@@ -187,7 +175,8 @@ export default function Login({ onLoginSuccess, onNavigateToRegister }: LoginPro
       position: 'relative',
       overflow: 'hidden',
       backgroundColor: 'var(--bg-primary)',
-      transition: 'background-color 0.5s ease'
+      transition: 'background-color 0.5s ease',
+      fontFamily: 'var(--font-main)'
     }}>
       {/* Inyecta estilos CSS específicos para hover, keyframes de orbes de fondo y glows */}
       <style>{`
@@ -207,8 +196,8 @@ export default function Login({ onLoginSuccess, onNavigateToRegister }: LoginPro
           100% { transform: scale(0.95); opacity: 0.2; }
         }
         .glass-input:focus {
-          border-color: var(--brand-teal) !important;
-          box-shadow: 0 0 14px rgba(14, 165, 164, 0.25) !important;
+          border-color: var(--brand-primary) !important;
+          box-shadow: 0 0 14px var(--brand-primary-light) !important;
         }
         .numpad-btn {
           background-color: var(--bg-input) !important;
@@ -230,7 +219,7 @@ export default function Login({ onLoginSuccess, onNavigateToRegister }: LoginPro
           transform: translateY(1px);
         }
         .login-btn-gradient {
-          background: var(--grad-teal) !important;
+          background: var(--brand-primary) !important;
           border: none !important;
           color: #060608 !important;
           font-family: var(--font-main) !important;
@@ -241,20 +230,20 @@ export default function Login({ onLoginSuccess, onNavigateToRegister }: LoginPro
           transition: all 0.25s ease !important;
         }
         .login-btn-gradient:hover {
-          filter: brightness(1.15) !important;
+          background: var(--brand-primary-hover) !important;
           transform: translateY(-2.5px) !important;
-          box-shadow: 0 8px 25px rgba(16, 227, 178, 0.35) !important;
+          box-shadow: 0 8px 25px var(--brand-primary-light) !important;
         }
         .login-btn-gradient:active {
           transform: translateY(0.5px) !important;
         }
         .glass-auth-card {
           background: rgba(20, 20, 23, 0.65) !important;
-          backdrop-filter: blur(25px) !important;
-          -webkit-backdrop-filter: blur(25px) !important;
-          border: 1px solid rgba(255, 255, 255, 0.05) !important;
-          box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4) !important;
-          border-radius: 36px !important;
+          backdrop-filter: blur(var(--glass-blur, 25px)) !important;
+          -webkit-backdrop-filter: blur(var(--glass-blur, 25px)) !important;
+          border: 1.5px solid var(--border-color) !important;
+          box-shadow: var(--card-shadow) !important;
+          border-radius: var(--card-radius, 24px) !important;
           padding: 40px !important;
           width: 100%;
           max-width: 450px;
@@ -264,12 +253,12 @@ export default function Login({ onLoginSuccess, onNavigateToRegister }: LoginPro
         }
         .light-theme .glass-auth-card {
           background: rgba(255, 255, 255, 0.65) !important;
-          border: 1px solid rgba(0, 0, 0, 0.05) !important;
-          box-shadow: 0 20px 50px rgba(160, 163, 189, 0.15) !important;
+          border: 1.5px solid var(--border-color) !important;
+          box-shadow: var(--card-shadow) !important;
         }
       `}</style>
 
-      {/* Floating Blurred Orbs in the Background (Teal and Purple/Pink) */}
+      {/* Floating Blurred Orbs in the Background */}
       <div style={{
         position: 'absolute',
         top: '-150px',
@@ -277,7 +266,7 @@ export default function Login({ onLoginSuccess, onNavigateToRegister }: LoginPro
         width: '450px',
         height: '450px',
         borderRadius: '50%',
-        background: 'radial-gradient(circle, rgba(14,165,164,0.18) 0%, rgba(14,165,164,0) 70%)',
+        background: 'radial-gradient(circle, var(--brand-primary-light) 0%, transparent 70%)',
         filter: 'blur(60px)',
         zIndex: 1,
         animation: 'float-slow-1 12s infinite alternate ease-in-out'
@@ -289,7 +278,7 @@ export default function Login({ onLoginSuccess, onNavigateToRegister }: LoginPro
         width: '450px',
         height: '450px',
         borderRadius: '50%',
-        background: 'radial-gradient(circle, rgba(223,158,255,0.15) 0%, rgba(223,158,255,0) 70%)',
+        background: 'radial-gradient(circle, hsla(var(--brand-primary-h), var(--brand-primary-s), var(--brand-primary-l), 0.1) 0%, transparent 70%)',
         filter: 'blur(60px)',
         zIndex: 1,
         animation: 'float-slow-2 15s infinite alternate ease-in-out'
@@ -298,99 +287,25 @@ export default function Login({ onLoginSuccess, onNavigateToRegister }: LoginPro
       {/* Frosted Glassmorphism Login Container */}
       <div className="glass-auth-card animate-entrance">
         
-        {/* Cabecera del Formulario con Logo y Controles */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', marginBottom: '24px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span style={{ fontSize: '20px' }}>🛡️</span>
-            <span style={{
-              fontFamily: 'Outfit',
-              fontWeight: 800,
-              fontSize: '18px',
-              color: 'var(--brand-teal)',
-              letterSpacing: '-0.3px'
-            }}>StockMasterPro</span>
-          </div>
-          
-          <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-            {/* Indicador de Conexión Redondeado */}
-            <div 
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                padding: '5px 12px',
-                borderRadius: '50px',
-                backgroundColor: onlineStatus ? 'rgba(32, 227, 178, 0.12)' : 'rgba(239, 68, 68, 0.12)',
-                color: onlineStatus ? '#20e3b2' : '#ef4444',
-                fontSize: '10.5px',
-                fontWeight: 800,
-                border: `1px solid ${onlineStatus ? 'rgba(32, 227, 178, 0.2)' : 'rgba(239, 68, 68, 0.2)'}`
-              }}
-              title={onlineStatus ? "Conexión a internet activa (Sincronización en vivo)" : "Modo desconectado activo (Funcionando localmente)"}
-            >
-              {onlineStatus ? <Wifi size={11} /> : <WifiOff size={11} />}
-              <span>{onlineStatus ? 'ONLINE' : 'OFFLINE'}</span>
-            </div>
-
-            {/* Selector de Tema */}
-            <button 
-              onClick={() => setIsDark(!isDark)}
-              style={{
-                background: 'rgba(255, 255, 255, 0.05)',
-                border: '1px solid var(--border-color)',
-                borderRadius: '10px',
-                width: '32px',
-                height: '32px',
-                color: 'var(--text-secondary)',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                transition: 'all 0.2s'
-              }}
-              title={isDark ? "Cambiar a Modo Claro" : "Cambiar a Modo Oscuro"}
-            >
-              {isDark ? <Sun size={15} /> : <Moon size={15} />}
-            </button>
-          </div>
-        </div>
-
-        {/* Presentación del Logotipo Corporativo con Anillo de Pulsación */}
-        <div className="logo-glow-wrapper" style={{ position: 'relative', margin: '0 auto 16px auto', width: '76px', height: '76px' }}>
-          <div style={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            borderRadius: '50%',
-            background: 'var(--brand-teal)',
-            animation: 'pulse-ring 3s infinite',
-            zIndex: 0
-          }}></div>
+        {/* Cabecera del Formulario con Logo y Nombre en Una Sola Línea */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', justifyContent: 'center', width: '100%', marginBottom: '28px' }}>
           <img 
             src={logoImg} 
-            alt="Logotipo StockMaster" 
+            alt="Logo" 
             style={{ 
-              width: '76px', 
-              height: '76px', 
-              position: 'relative', 
-              zIndex: 1, 
+              width: '42px', 
+              height: '42px', 
               borderRadius: '50%', 
               border: '2px solid rgba(255, 255, 255, 0.1)',
-              boxShadow: '0 4px 15px rgba(0,0,0,0.2)'
+              boxShadow: '0 4px 15px rgba(0,0,0,0.2)' 
             }} 
           />
-        </div>
-
-        {/* Título de la Sección */}
-        <div style={{ textAlign: 'center', marginBottom: '24px' }}>
-          <h2 style={{ fontFamily: 'Outfit', fontWeight: 800, fontSize: '28px', color: 'var(--text-primary)', letterSpacing: '-0.5px', marginBottom: '4px' }}>
-            Acceso Autorizado
-          </h2>
-          <p style={{ fontSize: '12.5px', color: 'var(--text-secondary)' }}>
-            Punto de Venta e Inventario Offline-First
-          </p>
+          <span style={{
+            fontFamily: 'var(--font-script)',
+            fontSize: '34px',
+            color: 'var(--brand-primary)',
+            letterSpacing: '0.5px'
+          }}>StockMasterPro</span>
         </div>
 
         {/* Alerta de Error */}
@@ -423,7 +338,7 @@ export default function Login({ onLoginSuccess, onNavigateToRegister }: LoginPro
             backgroundColor: 'rgba(32, 227, 178, 0.08)',
             border: '1px solid rgba(32, 227, 178, 0.2)',
             padding: '12px 16px',
-            borderRadius: '14px',
+            borderRadius: 'var(--button-radius, 12px)',
             color: '#20e3b2',
             fontSize: '12.5px',
             fontWeight: 800,
@@ -438,7 +353,7 @@ export default function Login({ onLoginSuccess, onNavigateToRegister }: LoginPro
         <div style={{
           display: 'flex',
           backgroundColor: 'var(--bg-input)',
-          borderRadius: '16px',
+          borderRadius: 'calc(var(--input-radius, 12px) + 4px)',
           padding: '4px',
           width: '100%',
           marginBottom: '20px',
@@ -449,7 +364,7 @@ export default function Login({ onLoginSuccess, onNavigateToRegister }: LoginPro
             style={{
               flex: 1,
               padding: '11px 0',
-              borderRadius: '12px',
+              borderRadius: 'var(--button-radius, 12px)',
               border: 'none',
               cursor: 'pointer',
               fontWeight: 800,
@@ -459,7 +374,8 @@ export default function Login({ onLoginSuccess, onNavigateToRegister }: LoginPro
               backgroundColor: loginMethod === 'password' ? 'var(--bg-card)' : 'transparent',
               color: loginMethod === 'password' ? 'var(--text-primary)' : 'var(--text-secondary)',
               boxShadow: loginMethod === 'password' ? '0 4px 12px rgba(0,0,0,0.1)' : 'none',
-              transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)'
+              transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+              fontFamily: 'var(--font-main)'
             }}
           >
             Contraseña
@@ -469,7 +385,7 @@ export default function Login({ onLoginSuccess, onNavigateToRegister }: LoginPro
             style={{
               flex: 1,
               padding: '11px 0',
-              borderRadius: '12px',
+              borderRadius: 'var(--button-radius, 12px)',
               border: 'none',
               cursor: 'pointer',
               fontWeight: 800,
@@ -479,7 +395,8 @@ export default function Login({ onLoginSuccess, onNavigateToRegister }: LoginPro
               backgroundColor: loginMethod === 'pin' ? 'var(--bg-card)' : 'transparent',
               color: loginMethod === 'pin' ? 'var(--text-primary)' : 'var(--text-secondary)',
               boxShadow: loginMethod === 'pin' ? '0 4px 12px rgba(0,0,0,0.1)' : 'none',
-              transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)'
+              transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+              fontFamily: 'var(--font-main)'
             }}
           >
             PIN Cajero
@@ -513,9 +430,9 @@ export default function Login({ onLoginSuccess, onNavigateToRegister }: LoginPro
                   padding: '13px 14px 13px 42px',
                   backgroundColor: 'var(--bg-input)',
                   border: '1.5px solid var(--border-color)',
-                  borderRadius: '14px',
+                  borderRadius: 'var(--input-radius, 12px)',
                   color: 'var(--text-primary)',
-                  fontFamily: 'Outfit',
+                  fontFamily: 'var(--font-main)',
                   fontSize: '13.5px',
                   outline: 'none',
                   transition: 'all 0.25s ease'
@@ -549,9 +466,9 @@ export default function Login({ onLoginSuccess, onNavigateToRegister }: LoginPro
                     padding: '13px 42px 13px 42px',
                     backgroundColor: 'var(--bg-input)',
                     border: '1.5px solid var(--border-color)',
-                    borderRadius: '14px',
+                    borderRadius: 'var(--input-radius, 12px)',
                     color: 'var(--text-primary)',
-                    fontFamily: 'Outfit',
+                    fontFamily: 'var(--font-main)',
                     fontSize: '13.5px',
                     outline: 'none',
                     transition: 'all 0.25s ease'
@@ -598,14 +515,14 @@ export default function Login({ onLoginSuccess, onNavigateToRegister }: LoginPro
                 }}>
                   {Array.from({ length: 6 }).map((_, idx) => (
                     <div 
-                      key={idx}
+                       key={idx}
                       style={{
                         width: '14px',
                         height: '14px',
                         borderRadius: '50%',
-                        backgroundColor: pin.length > idx ? '#20e3b2' : 'var(--bg-input)',
-                        border: `1.5px solid ${pin.length > idx ? '#20e3b2' : 'var(--border-color)'}`,
-                        boxShadow: pin.length > idx ? '0 0 10px rgba(32, 227, 178, 0.4)' : 'none',
+                        backgroundColor: pin.length > idx ? 'var(--brand-primary)' : 'var(--bg-input)',
+                        border: `1.5px solid ${pin.length > idx ? 'var(--brand-primary)' : 'var(--border-color)'}`,
+                        boxShadow: pin.length > idx ? '0 0 10px var(--brand-primary-light)' : 'none',
                         transition: 'all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275)'
                       }}
                     />
@@ -629,7 +546,7 @@ export default function Login({ onLoginSuccess, onNavigateToRegister }: LoginPro
                     className="numpad-btn"
                     style={{
                       height: '46px',
-                      borderRadius: '14px',
+                      borderRadius: 'var(--button-radius, 12px)',
                     }}
                   >
                     {num}
@@ -642,7 +559,7 @@ export default function Login({ onLoginSuccess, onNavigateToRegister }: LoginPro
                   className="numpad-btn"
                   style={{
                     height: '46px',
-                    borderRadius: '14px',
+                    borderRadius: 'var(--button-radius, 12px)',
                     backgroundColor: 'rgba(239, 68, 68, 0.08) !important',
                     borderColor: 'rgba(239, 68, 68, 0.15) !important',
                     color: '#ef4444 !important',
@@ -659,7 +576,7 @@ export default function Login({ onLoginSuccess, onNavigateToRegister }: LoginPro
                   className="numpad-btn"
                   style={{
                     height: '46px',
-                    borderRadius: '14px',
+                    borderRadius: 'var(--button-radius, 12px)',
                   }}
                 >
                   0
@@ -671,7 +588,7 @@ export default function Login({ onLoginSuccess, onNavigateToRegister }: LoginPro
                   className="numpad-btn"
                   style={{
                     height: '46px',
-                    borderRadius: '14px',
+                    borderRadius: 'var(--button-radius, 12px)',
                     fontSize: '16px !important'
                   }}
                 >
@@ -689,7 +606,7 @@ export default function Login({ onLoginSuccess, onNavigateToRegister }: LoginPro
             style={{
               width: '100%',
               padding: '14px 0',
-              borderRadius: '14px',
+              borderRadius: 'var(--button-radius, 12px)',
               justifyContent: 'center',
               marginTop: '12px',
               opacity: isLoading ? 0.65 : 1,
@@ -715,17 +632,40 @@ export default function Login({ onLoginSuccess, onNavigateToRegister }: LoginPro
             <span 
               onClick={onNavigateToRegister}
               style={{
-                color: 'var(--brand-teal)',
+                color: 'var(--brand-primary)',
                 fontWeight: 800,
                 cursor: 'pointer',
                 textDecoration: 'none',
                 marginLeft: '4px',
-                transition: 'all 0.2s'
+                transition: 'all 0.2s',
+                fontFamily: 'var(--font-main)'
               }}
-              onMouseEnter={(e) => e.currentTarget.style.color = '#20e3b2'}
-              onMouseLeave={(e) => e.currentTarget.style.color = 'var(--brand-teal)'}
+              onMouseEnter={(e) => e.currentTarget.style.color = 'var(--brand-primary-hover)'}
+              onMouseLeave={(e) => e.currentTarget.style.color = 'var(--brand-primary)'}
             >
               Registrarse
+            </span>
+          </div>
+        )}
+        {onBackToLanding && (
+          <div style={{
+            textAlign: 'center',
+            marginTop: '16px',
+            fontSize: '12.5px'
+          }}>
+            <span 
+              onClick={onBackToLanding}
+              style={{
+                color: 'var(--text-muted)',
+                fontWeight: 700,
+                cursor: 'pointer',
+                transition: 'all 0.2s',
+                textDecoration: 'underline'
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.color = 'var(--text-primary)'}
+              onMouseLeave={(e) => e.currentTarget.style.color = 'var(--text-muted)'}
+            >
+              ← Volver al inicio
             </span>
           </div>
         )}

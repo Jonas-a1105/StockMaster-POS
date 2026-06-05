@@ -1,7 +1,12 @@
 import { useState, useEffect } from 'react';
 import { DollarSign, Plus, AlertCircle, X, Edit, Trash2 } from 'lucide-react';
 import { getDatabase, type UserDocType } from '../db/database';
+import { syncWorker } from '../db/sync';
 import { API_URL } from '../config';
+import { logAuditEvent } from '../utils/audit';
+import CustomSelect from './CustomSelect';
+import CustomDatePicker from './CustomDatePicker';
+
 
 interface NominaProps {
   user: {
@@ -42,6 +47,14 @@ export default function Nomina({ user, searchTerm = '' }: NominaProps) {
   });
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<PayrollRecord | null>(null);
 
+  // Mobile detection for full-height modal layout
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth <= 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
   // C4: Pagination state
   const [currentPage, setCurrentPage] = useState(1);
   const ITEMS_PER_PAGE = 10;
@@ -62,63 +75,55 @@ export default function Nomina({ user, searchTerm = '' }: NominaProps) {
       const db = await getDatabase();
       const allUsers = await db.users.find().exec();
       setEmployees(allUsers.map(doc => doc.toJSON()));
-
-      // Obtener nóminas locales
-      const token = localStorage.getItem('auth_token');
-      if (token && navigator.onLine) {
-        const response = await fetch(`${API_URL}/payroll`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        if (response.ok) {
-          const data = await response.json();
-          // Mapeamos datos enriquecidos
-          const mapped = data.map((item: any) => ({
-            id: item.id,
-            employeeId: item.employeeId,
-            employeeName: item.employee?.name || 'Empleado',
-            baseSalary: item.baseSalary,
-            hoursWorked: item.hoursWorked,
-            bonuses: item.bonuses,
-            deductions: item.deductions,
-            totalPaid: item.totalPaid,
-            status: item.status,
-            paymentDate: item.paymentDate
-          }));
-          setPayrolls(mapped);
-          localStorage.setItem('stockmaster_payroll_records', JSON.stringify(mapped));
-          return;
-        }
-      }
-
-      const savedPayrolls = localStorage.getItem('stockmaster_payroll_records');
-      if (savedPayrolls) {
-        setPayrolls(JSON.parse(savedPayrolls));
-      } else {
-        // Fallback local: Si no hay conexión o no hay token, simula datos de nóminas para cajero
-        const fallbackPayrolls: PayrollRecord[] = [
-          {
-            id: 'pay_01',
-            employeeId: user.id,
-            employeeName: user.name,
-            baseSalary: 850.0,
-            hoursWorked: 40,
-            bonuses: 100.0,
-            deductions: 50.0,
-            totalPaid: 900.0,
-            status: 'PAGADO',
-            paymentDate: new Date().toISOString()
-          }
-        ];
-        setPayrolls(fallbackPayrolls);
-        localStorage.setItem('stockmaster_payroll_records', JSON.stringify(fallbackPayrolls));
-      }
+      
+      await syncWorker.sync();
     } catch (err) {
       console.error('Error cargando nóminas:', err);
     }
   };
 
   useEffect(() => {
-    loadData();
+    let sub: any = null;
+
+    const setupSubscription = async () => {
+      try {
+        const db = await getDatabase();
+        
+        // Fetch employees list
+        const allUsers = await db.users.find().exec();
+        setEmployees(allUsers.map(doc => doc.toJSON()));
+
+        const query = db.payroll.find();
+        sub = query.$.subscribe((payrollDocs) => {
+          const mapped = payrollDocs.map(doc => {
+            const docData = doc.toJSON();
+            return {
+              id: docData.id,
+              employeeId: docData.employeeId,
+              employeeName: docData.employeeName || 'Empleado',
+              baseSalary: docData.baseSalary,
+              hoursWorked: docData.hoursWorked,
+              bonuses: docData.bonuses,
+              deductions: docData.deductions,
+              totalPaid: docData.totalPaid,
+              status: docData.status,
+              paymentDate: docData.paymentDate
+            };
+          });
+          
+          mapped.sort((a, b) => b.id.localeCompare(a.id));
+          setPayrolls(mapped);
+        });
+      } catch (err) {
+        console.error('Error setting up payroll RxDB subscription:', err);
+      }
+    };
+
+    setupSubscription();
+
+    return () => {
+      if (sub) sub.unsubscribe();
+    };
   }, []);
 
   const handleRegisterPayroll = async (e: React.FormEvent) => {
@@ -130,66 +135,49 @@ export default function Nomina({ user, searchTerm = '' }: NominaProps) {
       return;
     }
 
-    const payload = {
-      employeeId: selectedEmployeeId,
-      baseSalary: Number(baseSalary),
-      hoursWorked: Number(hoursWorked),
-      bonuses: Number(bonuses),
-      deductions: Number(deductions),
-      paymentDate
-    };
+    const employeeObj = employees.find(emp => emp.id === selectedEmployeeId);
+    const employeeName = employeeObj?.name || 'Empleado';
+    const totalPaid = Number(baseSalary) + Number(bonuses) - Number(deductions);
 
     try {
-      const token = localStorage.getItem('auth_token');
-      if (token && navigator.onLine) {
-        // Registro en backend
-        const response = await fetch(`${API_URL}/payroll`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
-          },
-          body: JSON.stringify(payload)
-        });
+      const db = await getDatabase();
+      const id = 'pay_' + Date.now();
 
-        if (!response.ok) {
-          const data = await response.json();
-          throw new Error(data.message || 'Error al procesar nómina en servidor.');
-        }
+      await db.payroll.insert({
+        id,
+        employeeId: selectedEmployeeId,
+        employeeName,
+        baseSalary: Number(baseSalary),
+        hoursWorked: Number(hoursWorked),
+        bonuses: Number(bonuses),
+        deductions: Number(deductions),
+        totalPaid,
+        status: 'PENDIENTE',
+        paymentDate,
+        pendingSync: true,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
 
-        setShowAddForm(false);
-        loadData();
-        setAlertConfig({
-          title: 'Nómina Procesada',
-          message: 'Pago de nómina registrado con éxito en PostgreSQL centralizado.',
-          type: 'success'
-        });
-      } else {
-        // Simulación offline
-        const employeeObj = employees.find(emp => emp.id === selectedEmployeeId);
-        const newRecord: PayrollRecord = {
-          id: 'pay_' + Date.now(),
-          employeeId: selectedEmployeeId,
-          employeeName: employeeObj?.name || 'Empleado',
-          baseSalary: Number(baseSalary),
-          hoursWorked: Number(hoursWorked),
-          bonuses: Number(bonuses),
-          deductions: Number(deductions),
-          totalPaid: Number(baseSalary) + Number(bonuses) - Number(deductions),
-          status: 'PENDIENTE_SYNC',
-          paymentDate: paymentDate
-        };
-        const updated = [...payrolls, newRecord];
-        setPayrolls(updated);
-        localStorage.setItem('stockmaster_payroll_records', JSON.stringify(updated));
+      logAuditEvent(user, 'NOMINA_PAGO_REGISTRAR', {
+        employeeName,
+        totalPaid
+      });
 
-        setAlertConfig({
-          title: 'Nómina en Caché',
-          message: 'Nómina registrada en caché local y persistida en LocalStorage.',
-          type: 'info'
-        });
-        setShowAddForm(false);
-      }
+      setShowAddForm(false);
+      setSelectedEmployeeId('');
+      setBaseSalary('');
+      setHoursWorked('');
+      setBonuses('0');
+      setDeductions('0');
+
+      setAlertConfig({
+        title: 'Nómina Registrada',
+        message: 'Pago de nómina registrado con éxito en el libro local.',
+        type: 'success'
+      });
+
+      syncWorker.sync();
     } catch (err: any) {
       setErrorMessage(err.message || 'Fallo al guardar nómina.');
     }
@@ -206,7 +194,7 @@ export default function Nomina({ user, searchTerm = '' }: NominaProps) {
     setShowEditModal(true);
   };
 
-  const handleSaveEditPayroll = (e: React.FormEvent) => {
+  const handleSaveEditPayroll = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingPayroll) return;
 
@@ -215,43 +203,58 @@ export default function Nomina({ user, searchTerm = '' }: NominaProps) {
     const bon = Number(editPayrollForm.bonuses) || 0;
     const ded = Number(editPayrollForm.deductions) || 0;
 
-    const updated = payrolls.map(pay => {
-      if (pay.id === editingPayroll.id) {
-        return {
-          ...pay,
+    try {
+      const db = await getDatabase();
+      const doc = await db.payroll.findOne({ selector: { id: editingPayroll.id } }).exec();
+      if (doc) {
+        await doc.patch({
           baseSalary: base,
           hoursWorked: hours,
           bonuses: bon,
           deductions: ded,
           totalPaid: base + bon - ded,
-        };
+          pendingSync: true,
+          updatedAt: new Date().toISOString()
+        });
       }
-      return pay;
-    });
 
-    setPayrolls(updated);
-    localStorage.setItem('stockmaster_payroll_records', JSON.stringify(updated));
-    setShowEditModal(false);
-    setEditingPayroll(null);
-    setAlertConfig({
-      title: 'Nómina Actualizada',
-      message: 'Nómina actualizada correctamente de forma local.',
-      type: 'success'
-    });
+      logAuditEvent(user, 'NOMINA_EDITAR', {
+        employeeName: editingPayroll.employeeName
+      });
+
+      setShowEditModal(false);
+      setEditingPayroll(null);
+      setAlertConfig({
+        title: 'Nómina Actualizada',
+        message: 'Nómina actualizada correctamente de forma local.',
+        type: 'success'
+      });
+
+      syncWorker.sync();
+    } catch (err) {
+      console.error('Error saving edited payroll:', err);
+    }
   };
 
-  const handleDeletePayroll = () => {
+  const handleDeletePayroll = async () => {
     if (!showDeleteConfirm) return;
 
-    const updated = payrolls.filter(pay => pay.id !== showDeleteConfirm.id);
-    setPayrolls(updated);
-    localStorage.setItem('stockmaster_payroll_records', JSON.stringify(updated));
-    setShowDeleteConfirm(null);
-    setAlertConfig({
-      title: 'Nómina Eliminada',
-      message: 'El registro de nómina ha sido removido.',
-      type: 'success'
-    });
+    try {
+      const db = await getDatabase();
+      const doc = await db.payroll.findOne({ selector: { id: showDeleteConfirm.id } }).exec();
+      if (doc) {
+        await doc.remove();
+      }
+
+      setShowDeleteConfirm(null);
+      setAlertConfig({
+        title: 'Nómina Eliminada',
+        message: 'El registro de nómina ha sido removido.',
+        type: 'success'
+      });
+    } catch (err) {
+      console.error('Error deleting payroll:', err);
+    }
   };
 
   // Filtrar las nóminas según el buscador
@@ -270,10 +273,10 @@ export default function Nomina({ user, searchTerm = '' }: NominaProps) {
   const paginatedPayrolls = filteredPayrolls.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: showAddForm ? '1fr 350px' : '1fr', gap: '28px', height: '620px', minHeight: '620px', overflow: 'hidden' }}>
+    <div className="view-container-layout" style={{ display: 'flex', flexDirection: 'column', gap: '24px', width: '100%', paddingBottom: '30px' }}>
       
       {/* Panel de Listado de Nóminas */}
-      <div className="widget" style={{ padding: '24px', overflowY: 'auto', display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <div className="widget view-content-widget" style={{ padding: '24px', borderRadius: 'var(--card-radius)', display: 'flex', flexDirection: 'column' }}>
         
         {/* Encabezado */}
         <div className="widget-header" style={{ marginBottom: '22px', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px' }}>
@@ -407,132 +410,183 @@ export default function Nomina({ user, searchTerm = '' }: NominaProps) {
 
       </div>
 
-      {/* Formulario Lateral: Crear Nómina (Solo ADMIN) */}
+      {/* MODAL: REGISTRAR PAGO (GLASSMORPHISM) */}
       {showAddForm && isAdmin && (
-        <div className="widget animate-entrance" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px', overflowY: 'auto' }}>
-          <div className="widget-header" style={{ marginBottom: '0', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px' }}>
-            <h3 className="widget-title">Registrar Pago</h3>
-            <button 
-              onClick={() => setShowAddForm(false)}
-              style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}
-            >
-              <X size={16} />
-            </button>
-          </div>
-
-          {errorMessage && (
-            <div style={{
-              backgroundColor: 'rgba(239, 68, 68, 0.08)',
-              color: '#ef4444',
-              padding: '10px 14px',
-              borderRadius: '12px',
-              fontSize: '11.5px',
-              fontWeight: 700,
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              border: '1.5px solid rgba(239, 68, 68, 0.15)'
-            }}>
-              <AlertCircle size={14} />
-              <span>{errorMessage}</span>
-            </div>
-          )}
-
-          <form onSubmit={handleRegisterPayroll} style={{ display: 'flex', flexDirection: 'column', gap: '14px', fontSize: '13px' }}>
-            <div>
-              <label style={{ fontWeight: 800, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', textTransform: 'uppercase', fontSize: '10px' }}>
-                Seleccionar Empleado *
-              </label>
-              <select 
-                value={selectedEmployeeId}
-                onChange={(e) => setSelectedEmployeeId(e.target.value)}
-                className="dropdown-select"
-                style={{ width: '100%', padding: '10px', height: '40px', borderRadius: '12px' }}
+        <div className="modal-registration-backdrop" style={{
+          position: 'fixed',
+          top: 0, left: 0, right: 0, bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.65)',
+          backdropFilter: 'blur(8px)',
+          display: 'flex',
+          justifyContent: isMobile ? 'flex-start' : 'center',
+          alignItems: isMobile ? 'stretch' : 'center',
+          flexDirection: isMobile ? 'column' : 'row',
+          zIndex: 1500,
+          padding: isMobile ? 0 : '20px'
+        }}>
+          <div className={`widget ${!isMobile ? 'animate-entrance' : ''} modal-registration-content`} style={{
+            width: '100%',
+            maxWidth: isMobile ? '100%' : '480px',
+            padding: 0,
+            backgroundColor: 'var(--bg-card)',
+            borderRadius: isMobile ? 0 : 'var(--card-radius)',
+            border: isMobile ? 'none' : '1.5px solid var(--border-color)',
+            boxShadow: isMobile ? 'none' : '0 20px 50px rgba(0, 0, 0, 0.4)',
+            overflow: 'hidden',
+            display: 'flex',
+            flexDirection: 'column',
+            height: isMobile ? '100dvh' : 'auto',
+            maxHeight: isMobile ? '100dvh' : '90vh'
+          }}>
+            {/* Cabecera */}
+            <div style={{ padding: '20px 24px', borderBottom: '1.5px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Plus size={18} style={{ color: 'var(--brand-teal)' }} />
+                <h4 style={{ fontSize: '16px', fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>
+                  Registrar Pago de Nómina
+                </h4>
+              </div>
+              <button 
+                onClick={() => setShowAddForm(false)}
+                style={{ border: 'none', backgroundColor: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer', padding: '4px' }}
               >
-                <option value="">Seleccione...</option>
-                {employees.map(emp => (
-                  <option key={emp.id} value={emp.id}>{emp.name} ({emp.role})</option>
-                ))}
-              </select>
+                <X size={18} />
+              </button>
             </div>
 
-            <div>
-              <label style={{ fontWeight: 800, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', textTransform: 'uppercase', fontSize: '10px' }}>
-                Salario Base ($) *
-              </label>
-              <input 
-                type="number" 
-                value={baseSalary}
-                onChange={(e) => setBaseSalary(e.target.value)}
-                className="search-input"
-                placeholder="0.00"
-                style={{ padding: '10px 14px', borderRadius: '12px', border: '1.5px solid var(--border-color)', width: '100%' }}
-              />
-            </div>
+            {/* Formulario */}
+            <form onSubmit={handleRegisterPayroll} style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', flex: 1, minHeight: 0 }}>
+              <div style={{ padding: '24px', paddingBottom: isMobile ? '90px' : '24px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '16px', fontSize: '13px', flex: 1 }}>
+                {errorMessage && (
+                  <div style={{
+                    backgroundColor: 'rgba(239, 68, 68, 0.08)',
+                    color: '#ef4444',
+                    padding: '10px 14px',
+                    borderRadius: '12px',
+                    fontSize: '11.5px',
+                    fontWeight: 700,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    border: '1.5px solid rgba(239, 68, 68, 0.15)'
+                  }}>
+                    <AlertCircle size={14} />
+                    <span>{errorMessage}</span>
+                  </div>
+                )}
 
-            <div>
-              <label style={{ fontWeight: 800, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', textTransform: 'uppercase', fontSize: '10px' }}>
-                Horas Trabajadas *
-              </label>
-              <input 
-                type="number" 
-                value={hoursWorked}
-                onChange={(e) => setHoursWorked(e.target.value)}
-                className="search-input"
-                placeholder="40"
-                style={{ padding: '10px 14px', borderRadius: '12px', border: '1.5px solid var(--border-color)', width: '100%' }}
-              />
-            </div>
+                <div>
+                  <label style={{ fontWeight: 800, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', textTransform: 'uppercase', fontSize: '10px' }}>
+                    Seleccionar Empleado *
+                  </label>
+                  <CustomSelect 
+                    value={selectedEmployeeId}
+                    onChange={(val) => setSelectedEmployeeId(val)}
+                    options={[
+                      { value: '', label: 'Seleccione...' },
+                      ...employees.map(emp => ({ value: emp.id, label: `${emp.name} (${emp.role})` }))
+                    ]}
+                    style={{ width: '100%' }}
+                  />
+                </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-              <div>
-                <label style={{ fontWeight: 800, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', textTransform: 'uppercase', fontSize: '10px' }}>
-                  Bonos ($)
-                </label>
-                <input 
-                  type="number" 
-                  value={bonuses}
-                  onChange={(e) => setBonuses(e.target.value)}
-                  className="search-input"
-                  style={{ padding: '10px 14px', borderRadius: '12px', border: '1.5px solid var(--border-color)', width: '100%' }}
-                />
+                <div>
+                  <label style={{ fontWeight: 800, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', textTransform: 'uppercase', fontSize: '10px' }}>
+                    Salario Base ($) *
+                  </label>
+                  <input 
+                    type="number" 
+                    value={baseSalary}
+                    onChange={(e) => setBaseSalary(e.target.value)}
+                    className="search-input"
+                    placeholder="0.00"
+                    style={{ padding: '10px 14px', borderRadius: '12px', border: '1.5px solid var(--border-color)', width: '100%' }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ fontWeight: 800, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', textTransform: 'uppercase', fontSize: '10px' }}>
+                    Horas Trabajadas *
+                  </label>
+                  <input 
+                    type="number" 
+                    value={hoursWorked}
+                    onChange={(e) => setHoursWorked(e.target.value)}
+                    className="search-input"
+                    placeholder="40"
+                    style={{ padding: '10px 14px', borderRadius: '12px', border: '1.5px solid var(--border-color)', width: '100%' }}
+                  />
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                  <div>
+                    <label style={{ fontWeight: 800, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', textTransform: 'uppercase', fontSize: '10px' }}>
+                      Bonos ($)
+                    </label>
+                    <input 
+                      type="number" 
+                      value={bonuses}
+                      onChange={(e) => setBonuses(e.target.value)}
+                      className="search-input"
+                      style={{ padding: '10px 14px', borderRadius: '12px', border: '1.5px solid var(--border-color)', width: '100%' }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontWeight: 800, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', textTransform: 'uppercase', fontSize: '10px' }}>
+                      Deducciones ($)
+                    </label>
+                    <input 
+                      type="number" 
+                      value={deductions}
+                      onChange={(e) => setDeductions(e.target.value)}
+                      className="search-input"
+                      style={{ padding: '10px 14px', borderRadius: '12px', border: '1.5px solid var(--border-color)', width: '100%' }}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label style={{ fontWeight: 800, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', textTransform: 'uppercase', fontSize: '10px' }}>
+                    Fecha de Pago
+                  </label>
+                  <CustomDatePicker 
+                    value={paymentDate}
+                    onChange={setPaymentDate}
+                    placeholder="Seleccionar fecha de pago"
+                    style={{ width: '100%' }}
+                  />
+                </div>
               </div>
 
-              <div>
-                <label style={{ fontWeight: 800, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', textTransform: 'uppercase', fontSize: '10px' }}>
-                  Deducciones ($)
-                </label>
-                <input 
-                  type="number" 
-                  value={deductions}
-                  onChange={(e) => setDeductions(e.target.value)}
-                  className="search-input"
-                  style={{ padding: '10px 14px', borderRadius: '12px', border: '1.5px solid var(--border-color)', width: '100%' }}
-                />
+              {/* Botones de acción */}
+              <div style={{
+                padding: '16px 24px',
+                borderTop: '1.5px solid var(--border-color)',
+                display: 'flex',
+                justifyContent: 'flex-end',
+                gap: '10px',
+                backgroundColor: 'var(--bg-input)',
+                ...(isMobile ? { position: 'fixed' as const, bottom: 0, left: 0, right: 0, zIndex: 10 } : {})
+              }}>
+                <button
+                  type="button"
+                  onClick={() => setShowAddForm(false)}
+                  className="btn-pill-dark"
+                  style={{ padding: '8px 16px', borderRadius: 'var(--button-radius)', backgroundColor: 'var(--bg-card)' }}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="btn-yellow"
+                  style={{ padding: '8px 20px', borderRadius: 'var(--button-radius)' }}
+                >
+                  Registrar Liquidación
+                </button>
               </div>
-            </div>
-
-            <div>
-              <label style={{ fontWeight: 800, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', textTransform: 'uppercase', fontSize: '10px' }}>
-                Fecha de Pago
-              </label>
-              <input 
-                type="date" 
-                value={paymentDate}
-                onChange={(e) => setPaymentDate(e.target.value)}
-                className="search-input"
-                style={{ padding: '10px 14px', borderRadius: '12px', border: '1.5px solid var(--border-color)', width: '100%' }}
-              />
-            </div>
-
-            <button 
-              type="submit"
-              className="btn-yellow"
-              style={{ width: '100%', padding: '12px', borderRadius: '12px', justifyContent: 'center', marginTop: '10px' }}
-            >
-              Registrar Liquidación
-            </button>
-          </form>
+            </form>
+          </div>
         </div>
       )}
 
@@ -598,28 +652,31 @@ export default function Nomina({ user, searchTerm = '' }: NominaProps) {
 
       {/* MODAL: EDITAR NÓMINA (GLASSMORPHISM) */}
       {showEditModal && editingPayroll && (
-        <div style={{
+        <div className="modal-registration-backdrop" style={{
           position: 'fixed',
           top: 0, left: 0, right: 0, bottom: 0,
           backgroundColor: 'rgba(0, 0, 0, 0.65)',
           backdropFilter: 'blur(8px)',
           display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
+          justifyContent: isMobile ? 'flex-start' : 'center',
+          alignItems: isMobile ? 'stretch' : 'center',
+          flexDirection: isMobile ? 'column' : 'row',
           zIndex: 1500,
-          padding: '20px'
+          padding: isMobile ? 0 : '20px'
         }}>
-          <div className="widget" style={{
+          <div className={`widget ${!isMobile ? 'animate-entrance' : ''} modal-registration-content`} style={{
             width: '100%',
-            maxWidth: '480px',
+            maxWidth: isMobile ? '100%' : '480px',
+            padding: 0,
             backgroundColor: 'var(--bg-card)',
-            borderRadius: 'var(--card-radius)',
-            border: '1.5px solid var(--border-color)',
-            boxShadow: '0 20px 50px rgba(0, 0, 0, 0.4)',
+            borderRadius: isMobile ? 0 : 'var(--card-radius)',
+            border: isMobile ? 'none' : '1.5px solid var(--border-color)',
+            boxShadow: isMobile ? 'none' : '0 20px 50px rgba(0, 0, 0, 0.4)',
             overflow: 'hidden',
             display: 'flex',
             flexDirection: 'column',
-            animation: 'entrance 0.2s cubic-bezier(0.16, 1, 0.3, 1)'
+            height: isMobile ? '100dvh' : 'auto',
+            maxHeight: isMobile ? '100dvh' : '90vh'
           }}>
             {/* Cabecera */}
             <div style={{ padding: '20px 24px', borderBottom: '1.5px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -638,8 +695,8 @@ export default function Nomina({ user, searchTerm = '' }: NominaProps) {
             </div>
 
             {/* Formulario */}
-            <form onSubmit={handleSaveEditPayroll}>
-              <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '14px', fontSize: '13px' }}>
+            <form onSubmit={handleSaveEditPayroll} style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', flex: 1, minHeight: 0 }}>
+              <div style={{ padding: '24px', paddingBottom: isMobile ? '90px' : '24px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '14px', fontSize: '13px', flex: 1 }}>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                   <div>
                     <label style={{ fontWeight: 800, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', textTransform: 'uppercase', fontSize: '10px' }}>
@@ -700,7 +757,15 @@ export default function Nomina({ user, searchTerm = '' }: NominaProps) {
               </div>
 
               {/* Botones de acción */}
-              <div style={{ padding: '16px 24px', borderTop: '1.5px solid var(--border-color)', display: 'flex', justifyContent: 'flex-end', gap: '10px', backgroundColor: 'var(--bg-input)' }}>
+              <div style={{
+                padding: '16px 24px',
+                borderTop: '1.5px solid var(--border-color)',
+                display: 'flex',
+                justifyContent: 'flex-end',
+                gap: '10px',
+                backgroundColor: 'var(--bg-input)',
+                ...(isMobile ? { position: 'fixed' as const, bottom: 0, left: 0, right: 0, zIndex: 10 } : {})
+              }}>
                 <button
                   type="button"
                   onClick={() => { setShowEditModal(false); setEditingPayroll(null); }}

@@ -1,21 +1,22 @@
 import { useState, useEffect } from 'react';
 import { 
-  Search, 
-  FileText, 
-  Check, 
-  ArrowRight, 
-  X, 
-  ShoppingBag, 
-  Truck, 
-  Plus, 
+  Search,
+  Check,
+  X,
+  ShoppingBag,
+  Truck,
+  Plus,
   Calendar,
-  AlertCircle,
   RefreshCw,
-  Edit
+  Edit,
+  Info,
+  AlertCircle
 } from 'lucide-react';
 import { getDatabase } from '../db/database';
 import { syncWorker } from '../db/sync';
+import { logAuditEvent } from '../utils/audit';
 import { useExchangeRate } from '../contexts/ExchangeRateContext';
+import CustomSelect from './CustomSelect';
 
 interface ComprasProps {
   user: {
@@ -45,52 +46,22 @@ interface PurchaseOrder {
   status: 'Procesado' | 'Pendiente';
 }
 
-const PURCHASES_STORAGE_KEY = 'stockmaster_purchases_local';
 
-const MOCK_INVOICES = [
-  {
-    id: 'inv_01',
-    supplierName: 'Cervecería Polar C.A.',
-    invoiceNumber: 'FAC-99128',
-    date: '2026-06-01',
-    items: [
-      { code: '1001', name: 'Café Espresso Premium 1kg', category: 'Bebidas', quantity: 20, costUSD: 8.0 },
-      { code: '1002', name: 'Té Matcha Japonés 100g', category: 'Bebidas', quantity: 15, costUSD: 5.5 }
-    ]
-  },
-  {
-    id: 'inv_02',
-    supplierName: 'Alimentos Heinz de Venezuela C.A.',
-    invoiceNumber: 'FAC-22831',
-    date: '2026-06-02',
-    items: [
-      { code: '1003', name: 'Croissant de Mantequilla', category: 'Alimentos', quantity: 50, costUSD: 0.8 },
-      { code: '1004', name: 'Tarta de Chocolate Gourmet', category: 'Alimentos', quantity: 10, costUSD: 12.0 }
-    ]
-  },
-  {
-    id: 'inv_03',
-    supplierName: 'Lácteos Los Andes C.A.',
-    invoiceNumber: 'FAC-77401',
-    date: '2026-06-02',
-    items: [
-      { code: '1005', name: 'Leche Entera Premium 1L', category: 'Lácteos', quantity: 60, costUSD: 0.7 },
-      { code: '1006', name: 'Queso Gouda Artesanal 500g', category: 'Lácteos', quantity: 25, costUSD: 4.0 }
-    ]
-  }
-];
 
-export default function Compras({ searchTerm = '' }: ComprasProps) {
+export default function Compras({ user, searchTerm = '' }: ComprasProps) {
   const { convertToVES, formatVES, formatUSD } = useExchangeRate();
+  
+  // Mobile detection for full-height modal layout
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth <= 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
   const [purchases, setPurchases] = useState<PurchaseOrder[]>([]);
   const [localSearchTerm, setLocalSearchTerm] = useState('');
   const [isRefreshing, setIsRefreshing] = useState(false);
-
-  // OCR state
-  const [showOCRModal, setShowOCRModal] = useState(false);
-  const [selectedInvoice, setSelectedInvoice] = useState<typeof MOCK_INVOICES[0] | null>(null);
-  const [isScanning, setIsScanning] = useState(false);
-  const [ocrResult, setOcrResult] = useState<typeof MOCK_INVOICES[0] | null>(null);
 
   // Manual Register Purchase Form state
   const [showAddModal, setShowAddModal] = useState(false);
@@ -115,39 +86,72 @@ export default function Compras({ searchTerm = '' }: ComprasProps) {
   const [currentPage, setCurrentPage] = useState(1);
   const ITEMS_PER_PAGE = 10;
 
-  const loadPurchases = () => {
+  const loadPurchases = async () => {
     setIsRefreshing(true);
     try {
-      const saved = localStorage.getItem(PURCHASES_STORAGE_KEY);
-      if (saved) {
-        setPurchases(JSON.parse(saved));
-      } else {
-        // Seed default purchase logs
-        const initial: PurchaseOrder[] = [
-          {
-            id: 'ord_01',
-            invoiceNumber: 'FAC-98441',
-            supplierName: 'Cervecería Polar C.A.',
-            date: '2026-05-28',
-            items: [
-              { code: '1001', name: 'Café Espresso Premium 1kg', category: 'Bebidas', quantity: 10, costUSD: 8.0 }
-            ],
-            totalUSD: 80.0,
-            status: 'Procesado'
-          }
-        ];
-        setPurchases(initial);
-        localStorage.setItem(PURCHASES_STORAGE_KEY, JSON.stringify(initial));
-      }
+      await syncWorker.sync();
     } catch (e) {
-      console.error(e);
+      console.error('Error durante la sincronización manual:', e);
     } finally {
       setTimeout(() => setIsRefreshing(false), 400);
     }
   };
 
   useEffect(() => {
-    loadPurchases();
+    let sub: any = null;
+
+    const setupSubscription = async () => {
+      try {
+        const db = await getDatabase();
+        const query = db.purchases.find();
+        sub = query.$.subscribe(async (purchaseDocs) => {
+          const supplierDocs = await db.suppliers.find().exec();
+          const productDocs = await db.products.find().exec();
+
+          const supplierMap = new Map(supplierDocs.map(d => [d.id, d.get('companyName')]));
+          const productMap = new Map(productDocs.map(d => [d.id, { 
+            name: d.get('name'), 
+            code: d.get('code'),
+            category: d.get('category') 
+          }]));
+
+          const mappedOrders: PurchaseOrder[] = purchaseDocs.map(doc => {
+            const docData = doc.toJSON();
+            const itemsMapped = (docData.items || []).map((item: any) => {
+              const pInfo = productMap.get(item.productId) || { name: 'Producto Desconocido', code: '', category: 'General' };
+              return {
+                code: pInfo.code,
+                name: pInfo.name,
+                category: pInfo.category,
+                quantity: item.quantity,
+                costUSD: item.cost
+              };
+            });
+
+            return {
+              id: docData.id,
+              invoiceNumber: docData.invoiceNumber || 'S/N',
+              supplierName: supplierMap.get(docData.supplierId) || 'Proveedor Desconocido',
+              date: docData.createdAt.split('T')[0],
+              items: itemsMapped,
+              totalUSD: docData.total,
+              status: docData.pendingSync ? 'Pendiente' : 'Procesado'
+            };
+          });
+
+          mappedOrders.sort((a, b) => b.id.localeCompare(a.id));
+          setPurchases(mappedOrders);
+        });
+      } catch (err) {
+        console.error('Error setting up purchases RxDB subscription:', err);
+      }
+    };
+
+    setupSubscription();
+
+    return () => {
+      if (sub) sub.unsubscribe();
+    };
   }, []);
 
   const activeSearch = searchTerm || localSearchTerm;
@@ -163,91 +167,6 @@ export default function Compras({ searchTerm = '' }: ComprasProps) {
   const totalPages = Math.ceil(filteredPurchases.length / ITEMS_PER_PAGE);
   const paginatedPurchases = filteredPurchases.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
 
-  // OCR SCAN TRIGGER
-  const handleStartOCR = (invoice: typeof MOCK_INVOICES[0]) => {
-    setIsScanning(true);
-    setOcrResult(null);
-
-    setTimeout(() => {
-      setIsScanning(false);
-      setOcrResult(invoice);
-    }, 1500);
-  };
-
-  // MAPPING & INGESTING OCR INVOICE ITEMS INTO LOCAL PRODUCT INDEXEDDB
-  const handleImportOCR = async () => {
-    if (!ocrResult) return;
-
-    try {
-      const db = await getDatabase();
-
-      // Write items into local RxDB products cache
-      for (const item of ocrResult.items) {
-        const doc = await db.products.findOne({ selector: { code: item.code } }).exec();
-        if (doc) {
-          // If product exists, increase stock and update to latest purchasing cost
-          const currentStock = doc.get('stock');
-          const currentVersion = doc.get('version') || 1;
-          await doc.patch({
-            stock: currentStock + item.quantity,
-            cost: item.costUSD, 
-            version: currentVersion + 1,
-            updatedAt: new Date().toISOString()
-          });
-        } else {
-          // Create product if missing
-          await db.products.insert({
-            id: crypto.randomUUID(),
-            code: item.code,
-            name: item.name,
-            category: item.category,
-            price: Number((item.costUSD * 1.5).toFixed(2)), // 50% margin markup
-            cost: item.costUSD,
-            stock: item.quantity,
-            minStock: 5,
-            version: 1,
-            updatedAt: new Date().toISOString()
-          });
-        }
-      }
-
-      // Record Purchase Ledger entry
-      const totalUSD = ocrResult.items.reduce((sum, item) => sum + (item.costUSD * item.quantity), 0);
-      const newPurchase: PurchaseOrder = {
-        id: 'ord_' + Date.now(),
-        invoiceNumber: ocrResult.invoiceNumber,
-        supplierName: ocrResult.supplierName,
-        date: ocrResult.date,
-        items: ocrResult.items,
-        totalUSD: Number(totalUSD.toFixed(2)),
-        status: 'Procesado'
-      };
-
-      const updatedLedger = [newPurchase, ...purchases];
-      setPurchases(updatedLedger);
-      localStorage.setItem(PURCHASES_STORAGE_KEY, JSON.stringify(updatedLedger));
-
-      setShowOCRModal(false);
-      setSelectedInvoice(null);
-      setOcrResult(null);
-
-      // Trigger success Toast
-      setShowSuccessToast(`Factura ${newPurchase.invoiceNumber} aprobada y abastecida en inventario local.`);
-      setTimeout(() => setShowSuccessToast(null), 3500);
-
-      // Re-trigger background sync
-      syncWorker.sync();
-
-    } catch (err) {
-      console.error('Error importing OCR invoice items:', err);
-      setAlertConfig({
-        title: 'Error de Ingesta OCR',
-        message: 'Ocurrió un problema de base de datos durante la ingesta de productos de la factura.',
-        type: 'error'
-      });
-    }
-  };
-
   const handleEditPurchase = (order: PurchaseOrder) => {
     setEditingPurchase(order);
     setEditSupplierInput(order.supplierName);
@@ -256,7 +175,7 @@ export default function Compras({ searchTerm = '' }: ComprasProps) {
     setShowEditModal(true);
   };
 
-  const handleSaveEditPurchase = (e: React.FormEvent) => {
+  const handleSaveEditPurchase = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingPurchase || !editSupplierInput || !editInvoiceNumberInput || editFormItems.some(i => !i.code || !i.name || i.quantity <= 0)) {
       setAlertConfig({
@@ -267,26 +186,97 @@ export default function Compras({ searchTerm = '' }: ComprasProps) {
       return;
     }
 
-    const totalUSD = editFormItems.reduce((sum, item) => sum + (item.costUSD * item.quantity), 0);
-    const updated = purchases.map(p => {
-      if (p.id === editingPurchase.id) {
-        return {
-          ...p,
-          supplierName: editSupplierInput.trim(),
-          invoiceNumber: editInvoiceNumberInput.trim().toUpperCase(),
-          items: editFormItems,
-          totalUSD: Number(totalUSD.toFixed(2))
-        };
-      }
-      return p;
-    });
+    try {
+      const db = await getDatabase();
 
-    setPurchases(updated);
-    localStorage.setItem(PURCHASES_STORAGE_KEY, JSON.stringify(updated));
-    setShowEditModal(false);
-    setEditingPurchase(null);
-    setShowSuccessToast('Orden de compra editada exitosamente de forma local.');
-    setTimeout(() => setShowSuccessToast(null), 3000);
+      // Find or create supplier
+      let supplierId = '';
+      const existingSupplier = await db.suppliers.findOne({
+        selector: { companyName: editSupplierInput.trim() }
+      }).exec();
+
+      if (existingSupplier) {
+        supplierId = existingSupplier.get('id');
+      } else {
+        supplierId = 'sup_' + crypto.randomUUID();
+        await db.suppliers.insert({
+          id: supplierId,
+          rif: 'J-' + Math.floor(Math.random() * 100000000) + '-' + Math.floor(Math.random() * 10),
+          companyName: editSupplierInput.trim(),
+          contactName: 'N/A',
+          email: 'N/A',
+          phone: 'N/A',
+          address: 'Venezuela',
+          category: 'General',
+          paymentTerms: 'Contado',
+          status: 'Activo',
+          updatedAt: new Date().toISOString()
+        });
+      }
+
+      // Map items
+      const mappedItems: any[] = [];
+      for (const item of editFormItems) {
+        let productId = '';
+        const doc = await db.products.findOne({ selector: { code: item.code } }).exec();
+        if (doc) {
+          productId = doc.get('id');
+          await doc.patch({ cost: item.costUSD, updatedAt: new Date().toISOString() });
+        } else {
+          productId = crypto.randomUUID();
+          await db.products.insert({
+            id: productId,
+            code: item.code,
+            name: item.name,
+            category: item.category || 'General',
+            price: Number((item.costUSD * 1.5).toFixed(2)),
+            cost: item.costUSD,
+            stock: 0,
+            minStock: 5,
+            batches: JSON.stringify([]),
+            version: 1,
+            updatedAt: new Date().toISOString()
+          });
+        }
+        mappedItems.push({
+          productId,
+          quantity: item.quantity,
+          cost: item.costUSD
+        });
+      }
+
+      const totalUSD = editFormItems.reduce((sum, item) => sum + (item.costUSD * item.quantity), 0);
+      
+      const doc = await db.purchases.findOne({ selector: { id: editingPurchase.id } }).exec();
+      if (doc) {
+        await doc.patch({
+          supplierId,
+          invoiceNumber: editInvoiceNumberInput.trim().toUpperCase(),
+          total: Number(totalUSD.toFixed(2)),
+          items: mappedItems,
+          pendingSync: true,
+          updatedAt: new Date().toISOString()
+        });
+      }
+
+      logAuditEvent(user, 'COMPRA_EDITAR', {
+        id: editingPurchase.id
+      });
+
+      setShowEditModal(false);
+      setEditingPurchase(null);
+      setShowSuccessToast('Orden de compra editada exitosamente de forma local.');
+      setTimeout(() => setShowSuccessToast(null), 3000);
+
+      syncWorker.sync();
+    } catch (err) {
+      console.error('Error saving edited purchase:', err);
+      setAlertConfig({
+        title: 'Error de Edición',
+        message: 'No se pudo guardar la orden de compra editada en la base de datos.',
+        type: 'error'
+      });
+    }
   };
 
   // MANUAL REGISTRATION OF INVENTORY PURCHASES
@@ -304,22 +294,85 @@ export default function Compras({ searchTerm = '' }: ComprasProps) {
     try {
       const db = await getDatabase();
 
+      // Find or create supplier
+      let supplierId = '';
+      const existingSupplier = await db.suppliers.findOne({
+        selector: { companyName: supplierInput.trim() }
+      }).exec();
+
+      if (existingSupplier) {
+        supplierId = existingSupplier.get('id');
+      } else {
+        supplierId = 'sup_' + crypto.randomUUID();
+        await db.suppliers.insert({
+          id: supplierId,
+          rif: 'J-' + Math.floor(Math.random() * 100000000) + '-' + Math.floor(Math.random() * 10),
+          companyName: supplierInput.trim(),
+          contactName: 'N/A',
+          email: 'N/A',
+          phone: 'N/A',
+          address: 'Venezuela',
+          category: 'General',
+          paymentTerms: 'Contado',
+          status: 'Activo',
+          updatedAt: new Date().toISOString()
+        });
+      }
+
+      const mappedItems: any[] = [];
+
       // Adjust stock and costs for manual items
       for (const item of formItems) {
+        let productId = '';
         const doc = await db.products.findOne({ selector: { code: item.code } }).exec();
+        
+        const targetLote = (item.loteCode || 'LOTE-COMPRA').trim().toUpperCase();
+        const targetExpiry = item.expiryDate || 'N/A';
+
         if (doc) {
-          const currentStock = doc.get('stock');
+          productId = doc.get('id');
           const currentVersion = doc.get('version') || 1;
+          
+          let batches: any[] = [];
+          try {
+            if (doc.get('batches')) {
+              batches = JSON.parse(doc.get('batches'));
+            }
+          } catch {}
+
+          const matchIdx = batches.findIndex(b => b.loteCode === targetLote);
+          if (matchIdx >= 0) {
+            batches[matchIdx].stock += item.quantity;
+            if (targetExpiry && targetExpiry !== 'N/A') {
+              batches[matchIdx].expiryDate = targetExpiry;
+            }
+          } else {
+            batches.push({
+              loteCode: targetLote,
+              expiryDate: targetExpiry,
+              stock: item.quantity
+            });
+          }
+
+          const newStock = batches.reduce((acc, b) => acc + (b.stock || 0), 0);
+
           await doc.patch({
-            stock: currentStock + item.quantity,
+            stock: Number(newStock.toFixed(3)),
             cost: item.costUSD,
+            batches: JSON.stringify(batches),
             version: currentVersion + 1,
             updatedAt: new Date().toISOString()
           });
         } else {
+          productId = crypto.randomUUID();
+          const initialBatch = {
+            loteCode: targetLote,
+            expiryDate: targetExpiry,
+            stock: item.quantity
+          };
           // Insert product if not present
           await db.products.insert({
-            id: crypto.randomUUID(),
+            id: productId,
             code: item.code,
             name: item.name,
             category: item.category,
@@ -327,34 +380,46 @@ export default function Compras({ searchTerm = '' }: ComprasProps) {
             cost: item.costUSD,
             stock: item.quantity,
             minStock: 5,
+            batches: JSON.stringify([initialBatch]),
             version: 1,
             updatedAt: new Date().toISOString()
           });
         }
+
+        mappedItems.push({
+          productId,
+          quantity: item.quantity,
+          cost: item.costUSD,
+          loteCode: targetLote,
+          expiryDate: targetExpiry
+        });
       }
 
-      // Add Purchase entry to ledger
+      // Add Purchase entry to RxDB
       const totalUSD = formItems.reduce((sum, item) => sum + (item.costUSD * item.quantity), 0);
-      const newPurchase: PurchaseOrder = {
-        id: 'ord_' + Date.now(),
+      const purchaseId = 'ord_' + Date.now();
+      await db.purchases.insert({
+        id: purchaseId,
+        supplierId,
         invoiceNumber: invoiceNumberInput.trim().toUpperCase(),
-        supplierName: supplierInput.trim(),
-        date: new Date().toISOString().split('T')[0],
-        items: formItems,
-        totalUSD: Number(totalUSD.toFixed(2)),
-        status: 'Procesado'
-      };
+        total: Number(totalUSD.toFixed(2)),
+        items: mappedItems,
+        pendingSync: true,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
 
-      const updatedLedger = [newPurchase, ...purchases];
-      setPurchases(updatedLedger);
-      localStorage.setItem(PURCHASES_STORAGE_KEY, JSON.stringify(updatedLedger));
+      logAuditEvent(user, 'COMPRA_REGISTRAR_MANUAL', {
+        invoiceNumber: invoiceNumberInput.trim().toUpperCase(),
+        total: totalUSD
+      });
 
       setShowAddModal(false);
       setSupplierInput('');
       setInvoiceNumberInput('');
       setFormItems([{ code: '', name: '', category: 'Alimentos', quantity: 1, costUSD: 0.0 }]);
 
-      setShowSuccessToast(`Compra ${newPurchase.invoiceNumber} registrada y cargada al inventario.`);
+      setShowSuccessToast(`Compra ${invoiceNumberInput.trim().toUpperCase()} registrada y cargada al inventario.`);
       setTimeout(() => setShowSuccessToast(null), 3500);
 
       // Re-trigger sync
@@ -387,19 +452,25 @@ export default function Compras({ searchTerm = '' }: ComprasProps) {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', width: '100%', paddingBottom: '30px' }}>
+    <div className="view-container-layout" style={{ display: 'flex', flexDirection: 'column', gap: '24px', width: '100%', paddingBottom: '30px' }}>
       
       {/* SECCIÓN 1: CABECERA Y CONTROLES */}
-      <div className="widget" style={{ padding: '20px', borderRadius: 'var(--card-radius)' }}>
+      <div className="widget view-header-widget" style={{ padding: '20px', borderRadius: 'var(--card-radius)' }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '16px' }}>
           
-          <div>
-            <h2 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text-primary)', margin: 0, fontFamily: 'var(--font-main)' }}>
-              🧾 Libro de Compras y Abastecimiento OCR
-            </h2>
-            <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>
-              Registro de abastecimiento de stock, control de costos del catálogo e importación neuronal de facturas.
-            </p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            <div className="info-tooltip-wrapper">
+              <Info size={18} className="info-tooltip-icon" style={{ color: 'var(--text-secondary)', cursor: 'help', opacity: 0.8 }} />
+              <span className="tooltip-text">
+                Registro de abastecimiento de stock y control de costos del catálogo.
+              </span>
+            </div>
+            <span className="view-header-pill pill-teal">
+              {purchases.length} Compras
+            </span>
+            <span className="view-header-pill pill-green">
+              Total: ${purchases.reduce((acc, p) => acc + p.totalUSD, 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
           </div>
 
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'center' }}>
@@ -416,15 +487,6 @@ export default function Compras({ searchTerm = '' }: ComprasProps) {
                 />
               </div>
             )}
-
-            <button 
-              onClick={() => setShowOCRModal(true)}
-              className="btn-pill-dark"
-              style={{ color: 'var(--brand-teal)', borderColor: 'rgba(14, 165, 164, 0.25)', gap: '6px', height: '40px' }}
-            >
-              <FileText size={15} />
-              <span>Escanear Factura OCR</span>
-            </button>
 
             <button 
               onClick={() => setShowAddModal(true)}
@@ -474,7 +536,7 @@ export default function Compras({ searchTerm = '' }: ComprasProps) {
       )}
 
       {/* SECCIÓN 2: BITÁCORA HISTÓRICA DE COMPRAS */}
-      <div className="widget" style={{ padding: '24px', borderRadius: 'var(--card-radius)', display: 'flex', flexDirection: 'column' }}>
+      <div className="widget view-content-widget" style={{ padding: '24px', borderRadius: 'var(--card-radius)', display: 'flex', flexDirection: 'column' }}>
         <div className="details-table-wrapper" style={{ overflowX: 'auto' }}>
           <table className="details-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12.5px' }}>
             <thead>
@@ -583,29 +645,32 @@ export default function Compras({ searchTerm = '' }: ComprasProps) {
 
       {/* MODAL 1: REGISTRO MANUAL DE COMPRA */}
       {showAddModal && (
-        <div style={{
+        <div className="modal-registration-backdrop" style={{
           position: 'fixed',
           top: 0, left: 0, right: 0, bottom: 0,
           backgroundColor: 'rgba(0, 0, 0, 0.65)',
           backdropFilter: 'blur(8px)',
           display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
+          justifyContent: isMobile ? 'flex-start' : 'center',
+          alignItems: isMobile ? 'stretch' : 'center',
+          flexDirection: isMobile ? 'column' : 'row',
           zIndex: 1500,
-          padding: '20px'
+          padding: isMobile ? 0 : '20px'
         }}>
           
-          <div className="widget animate-entrance" style={{
+          <div className={`widget ${!isMobile ? 'animate-entrance' : ''} modal-registration-content`} style={{
             width: '100%',
-            maxWidth: '680px',
+            maxWidth: isMobile ? '100%' : '680px',
+            padding: 0,
             backgroundColor: 'var(--bg-card)',
-            borderRadius: 'var(--card-radius)',
-            border: '1.5px solid var(--border-color)',
-            boxShadow: '0 20px 50px rgba(0, 0, 0, 0.4)',
+            borderRadius: isMobile ? 0 : 'var(--card-radius)',
+            border: isMobile ? 'none' : '1.5px solid var(--border-color)',
+            boxShadow: isMobile ? 'none' : '0 20px 50px rgba(0, 0, 0, 0.4)',
             overflow: 'hidden',
             display: 'flex',
             flexDirection: 'column',
-            maxHeight: '85vh'
+            height: isMobile ? '100dvh' : 'auto',
+            maxHeight: isMobile ? '100dvh' : '90vh'
           }}>
             
             {/* Header */}
@@ -616,14 +681,14 @@ export default function Compras({ searchTerm = '' }: ComprasProps) {
                   Registrar Compra Manual de Reposición
                 </h4>
               </div>
-              <button onClick={() => setShowAddModal(false)} style={{ border: 'none', backgroundColor: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+              <button onClick={() => setShowAddModal(false)} style={{ border: 'none', backgroundColor: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer', padding: '4px' }}>
                 <X size={18} />
               </button>
             </div>
 
             {/* Form */}
-            <form onSubmit={handleAddManualPurchase} style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-              <div style={{ padding: '24px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '16px', fontSize: '13px' }}>
+            <form onSubmit={handleAddManualPurchase} style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', flex: 1, minHeight: 0 }}>
+              <div style={{ padding: '24px', paddingBottom: isMobile ? '90px' : '24px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '16px', fontSize: '13px', flex: 1 }}>
                 
                 {/* Supplier & Invoice input row */}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
@@ -675,67 +740,92 @@ export default function Compras({ searchTerm = '' }: ComprasProps) {
                     {formItems.map((item, idx) => {
                       const costVES = convertToVES(item.costUSD);
                       return (
-                        <div key={idx} style={{ display: 'flex', gap: '8px', alignItems: 'center', backgroundColor: 'var(--bg-primary)', padding: '10px', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
-                          <input 
-                            type="text" 
-                            placeholder="Cód: 1007"
-                            value={item.code}
-                            onChange={(e) => handleUpdateFormItem(idx, 'code', e.target.value)}
-                            style={{ width: '80px', padding: '6px', fontSize: '11px', borderRadius: '6px', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)' }}
-                            required
-                          />
-                          <input 
-                            type="text" 
-                            placeholder="Muffins..."
-                            value={item.name}
-                            onChange={(e) => handleUpdateFormItem(idx, 'name', e.target.value)}
-                            style={{ flex: 1, padding: '6px', fontSize: '11px', borderRadius: '6px', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)' }}
-                            required
-                          />
-                          <select 
-                            value={item.category}
-                            onChange={(e) => handleUpdateFormItem(idx, 'category', e.target.value)}
-                            style={{ width: '90px', padding: '5px', fontSize: '11px', borderRadius: '6px', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)' }}
-                          >
-                            <option value="Alimentos">Alimentos</option>
-                            <option value="Bebidas">Bebidas</option>
-                            <option value="Lácteos">Lácteos</option>
-                            <option value="General">General</option>
-                          </select>
-                          <input 
-                            type="number" 
-                            placeholder="Cant"
-                            value={item.quantity}
-                            onChange={(e) => handleUpdateFormItem(idx, 'quantity', Number(e.target.value))}
-                            style={{ width: '55px', padding: '6px', fontSize: '11px', borderRadius: '6px', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)', textAlign: 'center' }}
-                            required
-                          />
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
-                              <span style={{ fontSize: '9px', color: 'var(--text-muted)' }}>$</span>
+                        <div key={idx} style={{ display: 'flex', flexDirection: 'column', gap: '6px', backgroundColor: 'var(--bg-primary)', padding: '10px', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
+                          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            <input 
+                              type="text" 
+                              placeholder="Cód: 1007"
+                              value={item.code}
+                              onChange={(e) => handleUpdateFormItem(idx, 'code', e.target.value)}
+                              style={{ width: '80px', padding: '6px', fontSize: '11px', borderRadius: '6px', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)' }}
+                              required
+                            />
+                            <input 
+                              type="text" 
+                              placeholder="Nombre..."
+                              value={item.name}
+                              onChange={(e) => handleUpdateFormItem(idx, 'name', e.target.value)}
+                              style={{ flex: 1, padding: '6px', fontSize: '11px', borderRadius: '6px', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)' }}
+                              required
+                            />
+                            <CustomSelect 
+                              value={item.category}
+                              onChange={(val) => handleUpdateFormItem(idx, 'category', val)}
+                              options={[
+                                { value: 'Alimentos', label: 'Alimentos' },
+                                { value: 'Bebidas', label: 'Bebidas' },
+                                { value: 'Lácteos', label: 'Lácteos' },
+                                { value: 'General', label: 'General' }
+                              ]}
+                              style={{ width: '120px' }}
+                            />
+                            <input 
+                              type="number" 
+                              placeholder="Cant"
+                              value={item.quantity}
+                              onChange={(e) => handleUpdateFormItem(idx, 'quantity', Number(e.target.value))}
+                              style={{ width: '55px', padding: '6px', fontSize: '11px', borderRadius: '6px', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)', textAlign: 'center' }}
+                              required
+                            />
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+                                <span style={{ fontSize: '9px', color: 'var(--text-muted)' }}>$</span>
+                                <input 
+                                  type="number" 
+                                  step="0.01"
+                                  placeholder="0.00"
+                                  value={item.costUSD || ''}
+                                  onChange={(e) => handleUpdateFormItem(idx, 'costUSD', Number(e.target.value))}
+                                  style={{ width: '65px', padding: '6px', fontSize: '11px', borderRadius: '6px', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)' }}
+                                  required
+                                />
+                              </div>
+                              <span style={{ fontSize: '8.5px', color: 'var(--brand-gold)', alignSelf: 'flex-end', fontFamily: 'monospace' }}>
+                                Bs. {costVES.toFixed(1)}
+                              </span>
+                            </div>
+
+                            <button 
+                              type="button" 
+                              onClick={() => handleRemoveFormItem(idx)}
+                              disabled={formItems.length === 1}
+                              style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px', opacity: formItems.length === 1 ? 0.4 : 1 }}
+                            >
+                              <X size={14} />
+                            </button>
+                          </div>
+                          
+                          <div style={{ display: 'flex', gap: '12px', alignItems: 'center', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '6px', paddingLeft: '4px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <span style={{ fontSize: '9.5px', fontWeight: 800, color: 'var(--text-secondary)' }}>CÓDIGO DE LOTE:</span>
                               <input 
-                                type="number" 
-                                step="0.01"
-                                placeholder="0.00"
-                                value={item.costUSD || ''}
-                                onChange={(e) => handleUpdateFormItem(idx, 'costUSD', Number(e.target.value))}
-                                style={{ width: '65px', padding: '6px', fontSize: '11px', borderRadius: '6px', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)' }}
-                                required
+                                type="text" 
+                                placeholder="Ej: LOTE-A"
+                                value={item.loteCode || ''}
+                                onChange={(e) => handleUpdateFormItem(idx, 'loteCode', e.target.value.toUpperCase())}
+                                style={{ width: '150px', padding: '4px 8px', fontSize: '10.5px', borderRadius: '6px', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)' }}
                               />
                             </div>
-                            <span style={{ fontSize: '8.5px', color: 'var(--brand-gold)', alignSelf: 'flex-end', fontFamily: 'monospace' }}>
-                              Bs. {costVES.toFixed(1)}
-                            </span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <span style={{ fontSize: '9.5px', fontWeight: 800, color: 'var(--text-secondary)' }}>F. VENCIMIENTO:</span>
+                              <input 
+                                type="date" 
+                                value={item.expiryDate || ''}
+                                onChange={(e) => handleUpdateFormItem(idx, 'expiryDate', e.target.value)}
+                                style={{ width: '130px', padding: '4px 8px', fontSize: '10.5px', borderRadius: '6px', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)' }}
+                              />
+                            </div>
                           </div>
-
-                          <button 
-                            type="button" 
-                            onClick={() => handleRemoveFormItem(idx)}
-                            disabled={formItems.length === 1}
-                            style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px', opacity: formItems.length === 1 ? 0.4 : 1 }}
-                          >
-                            <X size={14} />
-                          </button>
                         </div>
                       );
                     })}
@@ -761,7 +851,15 @@ export default function Compras({ searchTerm = '' }: ComprasProps) {
               </div>
 
               {/* Footer */}
-              <div style={{ padding: '16px 24px', borderTop: '1.5px solid var(--border-color)', display: 'flex', justifyContent: 'flex-end', gap: '10px', backgroundColor: 'var(--bg-input)' }}>
+              <div style={{
+                padding: '16px 24px',
+                borderTop: '1.5px solid var(--border-color)',
+                display: 'flex',
+                justifyContent: 'flex-end',
+                gap: '10px',
+                backgroundColor: 'var(--bg-input)',
+                ...(isMobile ? { position: 'fixed' as const, bottom: 0, left: 0, right: 0, zIndex: 10 } : {})
+              }}>
                 <button
                   type="button"
                   onClick={() => setShowAddModal(false)}
@@ -785,204 +883,34 @@ export default function Compras({ searchTerm = '' }: ComprasProps) {
         </div>
       )}
 
-      {/* MODAL 2: ESCÁNER INTELIGENTE OCR DE FACTURAS (MIGRADO DE INVENTARIO) */}
-      {showOCRModal && (
-        <div style={{
-          position: 'fixed',
-          top: 0, left: 0, right: 0, bottom: 0,
-          backgroundColor: 'rgba(6, 6, 8, 0.85)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 1500,
-          backdropFilter: 'blur(12px)',
-          WebkitBackdropFilter: 'blur(12px)',
-          padding: '20px'
-        }}>
-          <div className="widget animate-entrance" style={{
-            width: '100%',
-            maxWidth: '580px',
-            padding: '28px',
-            borderRadius: '28px',
-            boxShadow: 'var(--card-shadow)',
-            border: '1.5px solid var(--border-color)',
-            backgroundColor: 'var(--bg-card)'
-          }}>
-            <div className="widget-header" style={{ marginBottom: '22px', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px' }}>
-              <h3 className="widget-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <FileText style={{ color: 'var(--brand-teal)' }} />
-                <span>Reconocimiento Neuronal OCR de Facturas de Compra</span>
-              </h3>
-              <button 
-                onClick={() => { setShowOCRModal(false); setSelectedInvoice(null); setOcrResult(null); }}
-                style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            {ocrResult ? (
-              /* Lectura Exitosa */
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                
-                <div style={{ backgroundColor: 'rgba(14, 165, 164, 0.05)', padding: '16px', borderRadius: '16px', border: '1.5px solid rgba(14, 165, 164, 0.15)' }}>
-                  <div style={{ fontSize: '10px', fontWeight: 800, color: 'var(--brand-teal)', textTransform: 'uppercase' }}>PROVEEDOR RECONOCIDO CON ÉXITO:</div>
-                  <div style={{ fontSize: '15px', fontWeight: 800, marginTop: '2px', color: 'var(--text-primary)' }}>{ocrResult.supplierName}</div>
-                  <div style={{ display: 'flex', gap: '16px', marginTop: '6px', fontSize: '12px', color: 'var(--text-secondary)' }}>
-                    <span>Factura: <strong>{ocrResult.invoiceNumber}</strong></span>
-                    <span>Fecha: <strong>{ocrResult.date}</strong></span>
-                  </div>
-                </div>
-
-                <div style={{ border: '1.5px solid var(--border-color)', borderRadius: '16px', padding: '16px', backgroundColor: 'var(--bg-primary)' }}>
-                  <span style={{ fontSize: '10px', fontWeight: 800, color: 'var(--text-secondary)', display: 'block', marginBottom: '8px', textTransform: 'uppercase' }}>
-                    PRODUCTOS MAPEADOS AL CATÁLOGO (MONEDA DUAL):
-                  </span>
-                  
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '180px', overflowY: 'auto' }}>
-                    {ocrResult.items.map((item, i) => (
-                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px', borderBottom: i < ocrResult.items.length - 1 ? '1px solid var(--border-color)' : 'none', paddingBottom: i < ocrResult.items.length - 1 ? '8px' : '0' }}>
-                        <div>
-                          <strong style={{ display: 'block', color: 'var(--text-primary)' }}>{item.name}</strong>
-                          <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Cód: {item.code} | {item.category}</span>
-                        </div>
-                        <div style={{ textAlign: 'right' }}>
-                          <span className="status-badge delivered" style={{ fontSize: '10.5px', fontWeight: 800 }}>+{item.quantity} u.</span>
-                          <span style={{ display: 'block', fontSize: '11px', color: 'var(--text-secondary)', marginTop: '2px', fontFamily: 'monospace' }}>
-                            {formatUSD(item.costUSD)} / Bs. {convertToVES(item.costUSD).toFixed(1)}
-                          </span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div style={{ display: 'flex', gap: '12px', marginTop: '8px' }}>
-                  <button 
-                    onClick={() => { setOcrResult(null); setSelectedInvoice(null); }}
-                    className="btn-pill-dark"
-                    style={{ flex: 1, justifyContent: 'center' }}
-                  >
-                    Escanear Otra
-                  </button>
-
-                  <button 
-                    onClick={handleImportOCR}
-                    className="btn-yellow"
-                    style={{ flex: 1, justifyContent: 'center', gap: '6px' }}
-                  >
-                    <Check size={16} />
-                    <span>Aprobar e Incrementar Stock</span>
-                  </button>
-                </div>
-              </div>
-            ) : isScanning ? (
-              /* Loader */
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '60px 0', gap: '20px' }}>
-                <div style={{
-                  width: '60px',
-                  height: '60px',
-                  borderRadius: '50%',
-                  border: '3px solid rgba(14, 165, 164, 0.1)',
-                  borderTopColor: 'var(--brand-teal)',
-                  animation: 'spin 1s linear infinite'
-                }} />
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
-                  <span style={{ fontSize: '14.5px', fontWeight: 800 }}>Procesando Factura con Red Neuronal OCR...</span>
-                  <span style={{ fontSize: '11.5px', color: 'var(--text-secondary)' }}>Mapeando códigos de barras y calculando stocks en bolívares</span>
-                </div>
-              </div>
-            ) : (
-              /* Selector de Factura */
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-                  Seleccione una de las facturas de proveedores escaneadas digitalmente para simular el procesamiento y mapeo inteligente de ítems de compra:
-                </p>
-
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                  {MOCK_INVOICES.map((inv) => (
-                    <div 
-                      key={inv.id}
-                      onClick={() => setSelectedInvoice(inv)}
-                      style={{
-                        padding: '14px',
-                        borderRadius: '16px',
-                        border: selectedInvoice?.id === inv.id ? '2px solid var(--brand-teal)' : '1.5px solid var(--border-color)',
-                        backgroundColor: selectedInvoice?.id === inv.id ? 'rgba(14, 165, 164, 0.05)' : 'var(--bg-primary)',
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        transition: 'all 0.2s ease'
-                      }}
-                    >
-                      <div>
-                        <strong style={{ fontSize: '13.5px', display: 'block', color: 'var(--text-primary)' }}>{inv.supplierName}</strong>
-                        <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Factura: {inv.invoiceNumber} | Fecha: {inv.date}</span>
-                      </div>
-                      <div style={{ textAlign: 'right', fontSize: '12px' }}>
-                        <span className="status-badge paid" style={{ fontSize: '10.5px' }}>{inv.items.length} ítems</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                <div style={{ display: 'flex', gap: '12px', marginTop: '12px' }}>
-                  <button 
-                    onClick={() => { setShowOCRModal(false); setSelectedInvoice(null); }}
-                    className="btn-pill-dark"
-                    style={{ flex: 1, justifyContent: 'center' }}
-                  >
-                    Cancelar
-                  </button>
-
-                  <button 
-                    onClick={() => selectedInvoice && handleStartOCR(selectedInvoice)}
-                    disabled={!selectedInvoice}
-                    className="btn-yellow"
-                    style={{
-                      flex: 1,
-                      justifyContent: 'center',
-                      gap: '8px',
-                      opacity: selectedInvoice ? 1 : 0.5,
-                      cursor: selectedInvoice ? 'pointer' : 'not-allowed'
-                    }}
-                  >
-                    <span>Procesar Factura OCR</span>
-                    <ArrowRight size={16} />
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
       {/* MODAL 1B: EDITAR ORDEN DE COMPRA (GLASSMORPHISM) */}
       {showEditModal && editingPurchase && (
-        <div style={{
+        <div className="modal-registration-backdrop" style={{
           position: 'fixed',
           top: 0, left: 0, right: 0, bottom: 0,
           backgroundColor: 'rgba(0, 0, 0, 0.65)',
           backdropFilter: 'blur(8px)',
           display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
+          justifyContent: isMobile ? 'flex-start' : 'center',
+          alignItems: isMobile ? 'stretch' : 'center',
+          flexDirection: isMobile ? 'column' : 'row',
           zIndex: 1500,
-          padding: '20px'
+          padding: isMobile ? 0 : '20px'
         }}>
           
-          <div className="widget animate-entrance" style={{
+          <div className={`widget ${!isMobile ? 'animate-entrance' : ''} modal-registration-content`} style={{
             width: '100%',
-            maxWidth: '680px',
+            maxWidth: isMobile ? '100%' : '680px',
+            padding: 0,
             backgroundColor: 'var(--bg-card)',
-            borderRadius: 'var(--card-radius)',
-            border: '1.5px solid var(--border-color)',
-            boxShadow: '0 20px 50px rgba(0, 0, 0, 0.4)',
+            borderRadius: isMobile ? 0 : 'var(--card-radius)',
+            border: isMobile ? 'none' : '1.5px solid var(--border-color)',
+            boxShadow: isMobile ? 'none' : '0 20px 50px rgba(0, 0, 0, 0.4)',
             overflow: 'hidden',
             display: 'flex',
             flexDirection: 'column',
-            maxHeight: '85vh'
+            height: isMobile ? '100dvh' : 'auto',
+            maxHeight: isMobile ? '100dvh' : '90vh'
           }}>
             
             {/* Header */}
@@ -993,14 +921,14 @@ export default function Compras({ searchTerm = '' }: ComprasProps) {
                   Editar Orden de Compra
                 </h4>
               </div>
-              <button onClick={() => { setShowEditModal(false); setEditingPurchase(null); }} style={{ border: 'none', backgroundColor: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+              <button onClick={() => { setShowEditModal(false); setEditingPurchase(null); }} style={{ border: 'none', backgroundColor: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer', padding: '4px' }}>
                 <X size={18} />
               </button>
             </div>
 
             {/* Form */}
-            <form onSubmit={handleSaveEditPurchase} style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
-              <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px', flex: 1, overflowY: 'auto', fontSize: '13px' }}>
+            <form onSubmit={handleSaveEditPurchase} style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', minHeight: 0 }}>
+              <div style={{ padding: '24px', paddingBottom: isMobile ? '90px' : '24px', display: 'flex', flexDirection: 'column', gap: '16px', flex: 1, overflowY: 'auto', fontSize: '13px' }}>
                 
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -1063,21 +991,22 @@ export default function Compras({ searchTerm = '' }: ComprasProps) {
                         placeholder="Nombre del Producto" 
                         required
                       />
-                      <select 
+                      <CustomSelect 
                         value={item.category} 
-                        onChange={(e) => {
+                        onChange={(val) => {
                           const updated = [...editFormItems];
-                          updated[index].category = e.target.value;
+                          updated[index].category = val;
                           setEditFormItems(updated);
                         }}
-                        className="dropdown-select"
-                      >
-                        <option value="Alimentos">Alimentos</option>
-                        <option value="Bebidas">Bebidas</option>
-                        <option value="Lácteos">Lácteos</option>
-                        <option value="Confitería">Confitería</option>
-                        <option value="Limpieza">Limpieza</option>
-                      </select>
+                        options={[
+                          { value: 'Alimentos', label: 'Alimentos' },
+                          { value: 'Bebidas', label: 'Bebidas' },
+                          { value: 'Lácteos', label: 'Lácteos' },
+                          { value: 'Confitería', label: 'Confitería' },
+                          { value: 'Limpieza', label: 'Limpieza' }
+                        ]}
+                        style={{ width: '130px' }}
+                      />
                       <input 
                         type="number" 
                         value={item.quantity} 
@@ -1111,7 +1040,15 @@ export default function Compras({ searchTerm = '' }: ComprasProps) {
               </div>
 
               {/* Footer */}
-              <div style={{ padding: '16px 24px', borderTop: '1.5px solid var(--border-color)', display: 'flex', justifyContent: 'flex-end', gap: '10px', backgroundColor: 'var(--bg-input)' }}>
+              <div style={{
+                padding: '16px 24px',
+                borderTop: '1.5px solid var(--border-color)',
+                display: 'flex',
+                justifyContent: 'flex-end',
+                gap: '10px',
+                backgroundColor: 'var(--bg-input)',
+                ...(isMobile ? { position: 'fixed' as const, bottom: 0, left: 0, right: 0, zIndex: 10 } : {})
+              }}>
                 <button
                   type="button"
                   onClick={() => { setShowEditModal(false); setEditingPurchase(null); }}

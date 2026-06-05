@@ -9,21 +9,50 @@ export class SyncService {
     private auditoria: AuditoriaService
   ) {}
 
-  // 1. PUSH: Recibe cambios del cliente local y los escribe en PostgreSQL central
-  async pushProducts(clientProducts: any[], userId: string) {
+  // 1. PUSH: Recibe cambios del cliente local y los escribe en SQLite central
+  async pushProducts(clientProducts: any[], userId: string, ipAddress = 'unknown', userAgent = 'RxDB Sync Client') {
     const processedIds: string[] = [];
 
     // Se procesa en una transacción para asegurar consistencia atómica
     await this.prisma.$transaction(async (tx) => {
-      for (const clientProd of clientProducts) {
-        const serverProd = await tx.product.findUnique({
-          where: { id: clientProd.id }
-        });
+      const ids = clientProducts.map(p => p.id);
+      const serverProds = await tx.product.findMany({
+        where: { id: { in: ids } }
+      });
+      const serverProdsMap = new Map(serverProds.map(p => [p.id, p]));
 
+      for (const clientProd of clientProducts) {
+        const serverProd = serverProdsMap.get(clientProd.id);
         const clientUpdatedAt = new Date(clientProd.updatedAt);
 
         if (!serverProd) {
-          // A. Documento nuevo: Se registra directamente en PostgreSQL
+          // A. Documento nuevo: Se registra directamente en SQLite
+          // Verificamos si existe otro producto con el mismo código de barras para evitar conflictos de unicidad
+          const existingByCode = await tx.product.findUnique({
+            where: { code: clientProd.code }
+          });
+
+          if (existingByCode) {
+            // Actualizar el producto existente con los datos nuevos
+            await tx.product.update({
+              where: { id: existingByCode.id },
+              data: {
+                code: clientProd.code,
+                name: clientProd.name,
+                category: clientProd.category || 'General',
+                price: clientProd.price,
+                cost: clientProd.cost || 0,
+                stock: clientProd.stock,
+                minStock: clientProd.minStock || 5,
+                batches: clientProd.batches || null,
+                version: (existingByCode.version || 1) + 1,
+                updatedAt: clientUpdatedAt
+              }
+            });
+            processedIds.push(existingByCode.id);
+            continue;
+          }
+
           await tx.product.create({
             data: {
               id: clientProd.id,
@@ -34,6 +63,7 @@ export class SyncService {
               cost: clientProd.cost || 0,
               stock: clientProd.stock,
               minStock: clientProd.minStock || 5,
+              batches: clientProd.batches || null,
               version: clientProd.version || 1,
               updatedAt: clientUpdatedAt
             }
@@ -55,6 +85,7 @@ export class SyncService {
                 cost: clientProd.cost || 0,
                 stock: clientProd.stock,
                 minStock: clientProd.minStock || 5,
+                batches: clientProd.batches || null,
                 version: (serverProd.version || 1) + 1, // Incrementa la versión
                 updatedAt: clientUpdatedAt
               }
@@ -72,8 +103,8 @@ export class SyncService {
                 clientTime: clientProd.updatedAt,
                 serverTime: serverProd.updatedAt
               },
-              '127.0.0.1',
-              'RxDB Sync Client'
+              ipAddress,
+              userAgent
             );
           } else {
             // El servidor tiene cambios más recientes: Se omite y se resolverá en el posterior PULL del cliente
@@ -108,21 +139,46 @@ export class SyncService {
     };
   }
 
-  // 3. PUSH SALES: Recibe ventas realizadas offline y las procesa en PostgreSQL central restando stock
-  async pushSales(clientSales: any[], userId: string) {
+  // 3. PUSH SALES: Recibe ventas realizadas offline y las procesa en SQLite central restando stock
+  async pushSales(clientSales: any[], userId: string, ipAddress = 'unknown', userAgent = 'RxDB Sync Client') {
     const processedIds: string[] = [];
+
+    // Batch query to find existing sales to avoid N+1 queries
+    const saleIds = clientSales.map(s => s.id);
+    const existingSales = await this.prisma.sale.findMany({
+      where: { id: { in: saleIds } }
+    });
+    const existingSalesMap = new Map(existingSales.map(s => [s.id, s]));
+
+    // Batch query to load all products concerned by all items in all sales to avoid N+1 inside loops
+    const productIds = Array.from(new Set(clientSales.flatMap(s => s.items || []).map(i => i.productId)));
+    const products = await this.prisma.product.findMany({
+      where: { id: { in: productIds } }
+    });
+    const productsMap = new Map(products.map(p => [p.id, p]));
 
     for (const clientSale of clientSales) {
       try {
-        await this.prisma.$transaction(async (tx) => {
-          // A. Verificar si la venta ya existe para evitar duplicidades
-          const existingSale = await tx.sale.findUnique({
-            where: { id: clientSale.id }
-          });
+        if (existingSalesMap.has(clientSale.id)) {
+          processedIds.push(clientSale.id);
+          continue; // Ya procesada previamente
+        }
 
-          if (existingSale) {
-            processedIds.push(clientSale.id);
-            return; // Ya procesada previamente
+        await this.prisma.$transaction(async (tx) => {
+          // Verificar si el cliente existe, de lo contrario lo seteamos a null para evitar violaciones de FK
+          let clientId = clientSale.clientId || null;
+          if (clientId) {
+            const clientExists = await tx.client.findUnique({ where: { id: clientId } });
+            if (!clientExists) {
+              clientId = null;
+            }
+          }
+
+          // Verificar si el cajero existe, de lo contrario usamos el ID del usuario autenticado (userId)
+          let cashierId = clientSale.cashierId;
+          const cashierExists = await tx.user.findUnique({ where: { id: cashierId } });
+          if (!cashierExists) {
+            cashierId = userId;
           }
 
           // B. Crear la venta principal
@@ -130,8 +186,8 @@ export class SyncService {
             data: {
               id: clientSale.id,
               ticketNumber: clientSale.ticketNumber,
-              cashierId: clientSale.cashierId,
-              clientId: clientSale.clientId || null,
+              cashierId: cashierId,
+              clientId: clientId,
               total: clientSale.total,
               paymentMethod: clientSale.paymentMethod,
               dolarRate: clientSale.dolarRate || 40.50,
@@ -142,6 +198,23 @@ export class SyncService {
 
           // C. Crear los ítems de venta y restar el stock correspondiente de cada producto
           for (const item of clientSale.items) {
+            // Verificar si el producto existe, de lo contrario creamos un placeholder temporal
+            const prodExists = await tx.product.findUnique({ where: { id: item.productId } });
+            if (!prodExists) {
+              await tx.product.create({
+                data: {
+                  id: item.productId,
+                  code: 'TEMP-' + Math.floor(Math.random() * 10000000),
+                  name: 'Producto Sincronizado',
+                  category: 'General',
+                  price: item.price,
+                  cost: item.price * 0.7,
+                  stock: 0,
+                  updatedAt: new Date()
+                }
+              });
+            }
+
             await tx.saleItem.create({
               data: {
                 saleId: clientSale.id,
@@ -151,10 +224,8 @@ export class SyncService {
               }
             });
 
-            // Restar stock del producto de forma transaccional y robusta
-            const product = await tx.product.findUnique({
-              where: { id: item.productId }
-            });
+            // Restar stock del producto usando cache batch en productsMap
+            const product = productsMap.get(item.productId);
 
             if (product) {
               const newStock = Math.max(0, product.stock - item.quantity);
@@ -167,6 +238,10 @@ export class SyncService {
                 }
               });
 
+              // Update our batch cache map so next sales processing this product get correct stock
+              product.stock = newStock;
+              product.version = product.version + 1;
+
               // Alerta de stock bajo si aplica
               if (newStock <= product.minStock) {
                 await this.auditoria.logAction(
@@ -178,7 +253,7 @@ export class SyncService {
                     stockActual: newStock,
                     minStock: product.minStock
                   },
-                  '127.0.0.1',
+                  ipAddress,
                   'Sync Server Stock Monitor'
                 );
               }
@@ -195,8 +270,8 @@ export class SyncService {
               total: clientSale.total,
               itemsCount: clientSale.items.length
             },
-            '127.0.0.1',
-            'RxDB Sync Client'
+            ipAddress,
+            userAgent
           );
 
           processedIds.push(clientSale.id);
@@ -211,15 +286,18 @@ export class SyncService {
   }
 
   // 4. PUSH CLIENTS: Recibe clientes modificados localmente
-  async pushClients(clientClients: any[], userId: string) {
+  async pushClients(clientClients: any[], userId: string, ipAddress = 'unknown', userAgent = 'RxDB Sync Client') {
     const processedIds: string[] = [];
 
     await this.prisma.$transaction(async (tx) => {
-      for (const clientCl of clientClients) {
-        const serverCl = await tx.client.findUnique({
-          where: { id: clientCl.id }
-        });
+      const ids = clientClients.map(c => c.id);
+      const serverClients = await tx.client.findMany({
+        where: { id: { in: ids } }
+      });
+      const serverClientsMap = new Map(serverClients.map(c => [c.id, c]));
 
+      for (const clientCl of clientClients) {
+        const serverCl = serverClientsMap.get(clientCl.id);
         const clientUpdatedAt = new Date(clientCl.updatedAt);
 
         if (!serverCl) {
@@ -282,12 +360,18 @@ export class SyncService {
   }
 
   // 6. PUSH SUPPLIERS: Recibe proveedores modificados localmente
-  async pushSuppliers(clientSuppliers: any[], userId: string) {
+  async pushSuppliers(clientSuppliers: any[], userId: string, ipAddress = 'unknown', userAgent = 'RxDB Sync Client') {
     const processedIds: string[] = [];
 
     await this.prisma.$transaction(async (tx) => {
+      const ids = clientSuppliers.map(s => s.id);
+      const serverSuppliers = await tx.supplier.findMany({
+        where: { id: { in: ids } }
+      });
+      const serverSuppliersMap = new Map(serverSuppliers.map(s => [s.id, s]));
+
       for (const s of clientSuppliers) {
-        const existing = await tx.supplier.findUnique({ where: { id: s.id } });
+        const existing = serverSuppliersMap.get(s.id);
         const clientUpdatedAt = new Date(s.updatedAt);
 
         if (!existing) {
@@ -297,6 +381,12 @@ export class SyncService {
               name: s.companyName || s.name,
               contact: s.contactName || null,
               phone: s.phone || null,
+              rif: s.rif || null,
+              email: s.email || null,
+              address: s.address || null,
+              category: s.category || 'General',
+              paymentTerms: s.paymentTerms || 'Contado',
+              status: s.status || 'Activo',
               updatedAt: clientUpdatedAt
             }
           });
@@ -309,6 +399,12 @@ export class SyncService {
                 name: s.companyName || s.name,
                 contact: s.contactName || null,
                 phone: s.phone || null,
+                rif: s.rif || null,
+                email: s.email || null,
+                address: s.address || null,
+                category: s.category || 'General',
+                paymentTerms: s.paymentTerms || 'Contado',
+                status: s.status || 'Activo',
                 updatedAt: clientUpdatedAt
               }
             });
@@ -332,14 +428,41 @@ export class SyncService {
   }
 
   // 8. PUSH PURCHASES: Recibe compras realizadas offline
-  async pushPurchases(clientPurchases: any[], userId: string) {
+  async pushPurchases(clientPurchases: any[], userId: string, ipAddress = 'unknown', userAgent = 'RxDB Sync Client') {
     const processedIds: string[] = [];
+    const purchaseIds = clientPurchases.map(p => p.id);
+    const existingPurchases = await this.prisma.purchase.findMany({
+      where: { id: { in: purchaseIds } }
+    });
+    const existingPurchasesMap = new Map(existingPurchases.map(p => [p.id, p]));
+
+    const productIds = Array.from(new Set(clientPurchases.flatMap(p => p.items || []).map(i => i.productId)));
+    const products = await this.prisma.product.findMany({
+      where: { id: { in: productIds } }
+    });
+    const productsMap = new Map(products.map(p => [p.id, p]));
 
     for (const p of clientPurchases) {
       try {
+        if (existingPurchasesMap.has(p.id)) {
+          processedIds.push(p.id);
+          continue;
+        }
+
         await this.prisma.$transaction(async (tx) => {
-          const existing = await tx.purchase.findUnique({ where: { id: p.id } });
-          if (existing) { processedIds.push(p.id); return; }
+          // Verificar si el proveedor existe, de lo contrario creamos un placeholder temporal
+          const supplierExists = await tx.supplier.findUnique({ where: { id: p.supplierId } });
+          if (!supplierExists) {
+            await tx.supplier.create({
+              data: {
+                id: p.supplierId,
+                name: 'Proveedor Sincronizado',
+                contact: 'N/A',
+                phone: 'N/A',
+                updatedAt: new Date()
+              }
+            });
+          }
 
           await tx.purchase.create({
             data: {
@@ -355,6 +478,23 @@ export class SyncService {
 
           if (p.items && Array.isArray(p.items)) {
             for (const item of p.items) {
+              // Verificar si el producto existe, de lo contrario creamos un placeholder temporal
+              const prodExists = await tx.product.findUnique({ where: { id: item.productId } });
+              if (!prodExists) {
+                await tx.product.create({
+                  data: {
+                    id: item.productId,
+                    code: 'TEMP-' + Math.floor(Math.random() * 10000000),
+                    name: 'Producto Sincronizado',
+                    category: 'General',
+                    price: item.cost * 1.5,
+                    cost: item.cost,
+                    stock: 0,
+                    updatedAt: new Date()
+                  }
+                });
+              }
+
               await tx.purchaseItem.create({
                 data: {
                   purchaseId: p.id,
@@ -364,21 +504,25 @@ export class SyncService {
                 }
               });
 
-              const product = await tx.product.findUnique({ where: { id: item.productId } });
+              const product = productsMap.get(item.productId);
               if (product) {
+                const newStock = product.stock + item.quantity;
                 await tx.product.update({
                   where: { id: item.productId },
                   data: {
-                    stock: product.stock + item.quantity,
+                    stock: newStock,
                     version: product.version + 1,
                     updatedAt: new Date()
                   }
                 });
+                // Update our cache
+                product.stock = newStock;
+                product.version = product.version + 1;
               }
             }
           }
 
-          await this.auditoria.logAction(userId, 'SYNC_COMPRA_PROCESADA', { purchaseId: p.id, total: p.total }, '127.0.0.1', 'RxDB Sync Client');
+          await this.auditoria.logAction(userId, 'SYNC_COMPRA_PROCESADA', { purchaseId: p.id, total: p.total }, ipAddress, userAgent);
           processedIds.push(p.id);
         });
       } catch (err: any) {
@@ -401,19 +545,33 @@ export class SyncService {
   }
 
   // 10. PUSH PAYROLL: Recibe registros de nómina offline
-  async pushPayroll(clientPayroll: any[], userId: string) {
+  async pushPayroll(clientPayroll: any[], userId: string, ipAddress = 'unknown', userAgent = 'RxDB Sync Client') {
     const processedIds: string[] = [];
+    const payrollIds = clientPayroll.map(pr => pr.id);
+    const existingPayroll = await this.prisma.payroll.findMany({
+      where: { id: { in: payrollIds } }
+    });
+    const existingPayrollMap = new Map(existingPayroll.map(pr => [pr.id, pr]));
 
     for (const pr of clientPayroll) {
       try {
+        if (existingPayrollMap.has(pr.id)) {
+          processedIds.push(pr.id);
+          continue;
+        }
+
         await this.prisma.$transaction(async (tx) => {
-          const existing = await tx.payroll.findUnique({ where: { id: pr.id } });
-          if (existing) { processedIds.push(pr.id); return; }
+          // Verificar si el empleado existe, de lo contrario usamos el ID del usuario autenticado (userId)
+          let employeeId = pr.employeeId;
+          const employeeExists = await tx.user.findUnique({ where: { id: employeeId } });
+          if (!employeeExists) {
+            employeeId = userId;
+          }
 
           await tx.payroll.create({
             data: {
               id: pr.id,
-              employeeId: pr.employeeId,
+              employeeId: employeeId,
               baseSalary: pr.baseSalary,
               hoursWorked: pr.hoursWorked || 0,
               bonuses: pr.bonuses || 0,
@@ -426,7 +584,7 @@ export class SyncService {
             }
           });
 
-          await this.auditoria.logAction(userId, 'SYNC_NOMINA_PROCESADA', { payrollId: pr.id, employeeId: pr.employeeId, totalPaid: pr.totalPaid }, '127.0.0.1', 'RxDB Sync Client');
+          await this.auditoria.logAction(userId, 'SYNC_NOMINA_PROCESADA', { payrollId: pr.id, employeeId: pr.employeeId, totalPaid: pr.totalPaid }, ipAddress, userAgent);
           processedIds.push(pr.id);
         });
       } catch (err: any) {

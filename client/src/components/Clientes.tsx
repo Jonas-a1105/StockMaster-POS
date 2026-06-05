@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
-import { Search, UserPlus, Mail, Phone, MapPin, Trash2, Edit, Check, AlertTriangle, AlertCircle, RefreshCw, X, CreditCard, DollarSign } from 'lucide-react';
+import { Search, UserPlus, Mail, Phone, MapPin, Trash2, Edit, Check, AlertTriangle, AlertCircle, RefreshCw, X, CreditCard, DollarSign, Info } from 'lucide-react';
 import { getDatabase, type ClientDocType } from '../db/database';
 import { useBusinessSettings } from '../contexts/BusinessSettingsContext';
+import CustomSelect from './CustomSelect';
 import { useExchangeRate } from '../contexts/ExchangeRateContext';
+import { logAuditEvent } from '../utils/audit';
 
 interface ClientesProps {
   user: {
@@ -22,7 +24,8 @@ interface CustomClient extends ClientDocType {
   status: 'Activo' | 'Inactivo';
 }
 
-export default function Clientes({ searchTerm = '' }: ClientesProps) {
+export default function Clientes({ searchTerm = '', user }: ClientesProps) {
+  const isAdmin = user.role === 'ADMIN';
   const { validateRIF, formatRIF } = useBusinessSettings();
   const { dolarRate } = useExchangeRate();
   const [clients, setClients] = useState<CustomClient[]>([]);
@@ -36,6 +39,14 @@ export default function Clientes({ searchTerm = '' }: ClientesProps) {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<CustomClient | null>(null);
   const [showSuccessToast, setShowSuccessToast] = useState<string | null>(null);
   const [alertConfig, setAlertConfig] = useState<{ title: string; message: string; type: 'success' | 'error' | 'info' } | null>(null);
+
+  // Mobile detection for full-height modal layout
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth <= 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   // C4: Pagination state
   const [currentPage, setCurrentPage] = useState(1);
@@ -65,36 +76,6 @@ export default function Clientes({ searchTerm = '' }: ClientesProps) {
     const saved = localStorage.getItem('stockmaster_client_credits_local');
     if (saved) {
       setCreditsMap(JSON.parse(saved));
-    } else {
-      const initialMap = {
-        'V-19445102-3': {
-          balanceUSD: 45.00,
-          invoices: [
-            { ticket: 'TK-884210', date: '28/05/2026', total: 45.00, paid: 0.00, pending: 45.00, status: 'Pendiente' as const }
-          ],
-          payments: []
-        },
-        'J-40812991-0': {
-          balanceUSD: 120.00,
-          invoices: [
-            { ticket: 'TK-774021', date: '15/05/2026', total: 250.00, paid: 130.00, pending: 120.00, status: 'Pendiente' as const }
-          ],
-          payments: [
-            { id: 'pay_01', date: '20/05/2026', amount: 130.00, method: 'TRANSFERENCIA' }
-          ]
-        },
-        'V-12845607-9': {
-          balanceUSD: 0.00,
-          invoices: [
-            { ticket: 'TK-662891', date: '20/05/2026', total: 80.00, paid: 80.00, pending: 0.00, status: 'Pagado' as const }
-          ],
-          payments: [
-            { id: 'pay_02', date: '22/05/2026', amount: 80.00, method: 'EFECTIVO' }
-          ]
-        }
-      };
-      setCreditsMap(initialMap);
-      localStorage.setItem('stockmaster_client_credits_local', JSON.stringify(initialMap));
     }
   };
 
@@ -114,40 +95,17 @@ export default function Clientes({ searchTerm = '' }: ClientesProps) {
       const db = await getDatabase();
       const allClientsDocs = await db.clients.find().exec();
       
-      if (allClientsDocs.length === 0) {
-        // Automatically seed mock Venezuelan clients if database is empty
-        await seedMockClients();
-        return;
-      }
-
-      // Map doc fields and parse metadata from database or fallbacks
       const mapped: CustomClient[] = allClientsDocs.map(doc => {
         const json = doc.toJSON();
-        
-        // Custom parsing or simulated values for extended fields
-        let rif = json.id; // Using ID as RIF
-        let address = 'Distrito Capital, Caracas, Venezuela';
-        let clientType: 'Regular' | 'Mayorista' = 'Regular';
-        let status: 'Activo' | 'Inactivo' = 'Activo';
-
-        // Derive some values based on RIF suffix/prefix for realistic mapping
-        if (json.id.startsWith('J-')) {
-          clientType = 'Mayorista';
-          address = 'Zona Industrial de Boleíta Norte, Caracas, Miranda';
-        } else if (json.id.endsWith('9') || json.id.endsWith('4')) {
-          clientType = 'Mayorista';
-          address = 'Avenida Bolívar, Valencia, Edo. Carabobo';
-        }
-
         return {
           id: json.id,
-          rif,
+          rif: json.id,
           name: json.name,
           email: json.email || 'N/A',
           phone: json.phone || 'N/A',
-          address,
-          clientType,
-          status,
+          address: 'Venezuela',
+          clientType: 'Regular',
+          status: 'Activo',
           updatedAt: json.updatedAt
         };
       });
@@ -157,33 +115,6 @@ export default function Clientes({ searchTerm = '' }: ClientesProps) {
       console.error('Error al cargar clientes de base local:', err);
     } finally {
       setTimeout(() => setIsRefreshing(false), 400);
-    }
-  };
-
-  const seedMockClients = async () => {
-    try {
-      const db = await getDatabase();
-      const seedData = [
-        { id: 'J-40812991-0', name: 'Distribuidora Inversiones El Ávila C.A.', email: 'compras@elavila.com.ve', phone: '0212-5551234' },
-        { id: 'V-19445102-3', name: 'María Alejandra Delgado', email: 'maria.delgado@gmail.com', phone: '0414-2283141' },
-        { id: 'J-30477401-2', name: 'Corporación Comercial Oriente', email: 'administracion@ccoriente.com', phone: '0281-2864010' },
-        { id: 'V-12845607-9', name: 'Carlos Eduardo Mendoza', email: 'carlos.mendoza@outlook.com', phone: '0424-9912831' }
-      ];
-
-      for (const item of seedData) {
-        await db.clients.insert({
-          id: item.id,
-          name: item.name,
-          email: item.email,
-          phone: item.phone,
-          updatedAt: new Date().toISOString()
-        });
-      }
-      
-      console.log('✅ Clientes semilla importados con éxito en RxDB local.');
-      loadClients();
-    } catch (err) {
-      console.error('Error al sembrar clientes:', err);
     }
   };
 
@@ -219,6 +150,7 @@ export default function Clientes({ searchTerm = '' }: ClientesProps) {
 
   const handleAddClient = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isAdmin) return;
     if (!newClient.rif || !newClient.name) {
       setAlertConfig({
         title: 'Campos Obligatorios',
@@ -257,6 +189,11 @@ export default function Clientes({ searchTerm = '' }: ClientesProps) {
         updatedAt: new Date().toISOString()
       });
 
+      logAuditEvent(user, 'CLIENTE_CREAR', {
+        name: newClient.name.trim(),
+        phone: newClient.phone.trim() || undefined
+      });
+
       setShowAddModal(false);
       setNewClient({
         rif: 'V-',
@@ -273,16 +210,17 @@ export default function Clientes({ searchTerm = '' }: ClientesProps) {
 
       loadClients();
     } catch (err) {
-      console.error(err);
+      console.error('Error adding client:', err);
       setAlertConfig({
-        title: 'Error de Inserción',
-        message: 'Error al agregar el cliente en la base local.',
+        title: 'Error de Servidor',
+        message: 'Ocurrió un error al registrar el cliente en la base local.',
         type: 'error'
       });
     }
   };
 
   const handleEditClient = (client: CustomClient) => {
+    if (!isAdmin) return;
     setEditingClient(client);
     setEditClientForm({
       rif: client.rif,
@@ -297,6 +235,7 @@ export default function Clientes({ searchTerm = '' }: ClientesProps) {
 
   const handleSaveEditClient = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isAdmin) return;
     if (!editClientForm.name) {
       setAlertConfig({
         title: 'Campos Obligatorios',
@@ -319,6 +258,11 @@ export default function Clientes({ searchTerm = '' }: ClientesProps) {
           }
         });
         
+        logAuditEvent(user, 'CLIENTE_EDITAR', {
+          id: editingClient?.id,
+          name: editClientForm.name.trim()
+        });
+
         setShowEditModal(false);
         setEditingClient(null);
         setShowSuccessToast('Cliente actualizado correctamente.');
@@ -336,6 +280,7 @@ export default function Clientes({ searchTerm = '' }: ClientesProps) {
   };
 
   const handleDeleteClient = async () => {
+    if (!isAdmin) return;
     if (!showDeleteConfirm) return;
 
     try {
@@ -343,6 +288,11 @@ export default function Clientes({ searchTerm = '' }: ClientesProps) {
       const doc = await db.clients.findOne({ selector: { id: showDeleteConfirm.id } }).exec();
       if (doc) {
         await doc.remove();
+
+        logAuditEvent(user, 'CLIENTE_ELIMINAR', {
+          id: showDeleteConfirm.id
+        });
+
         setShowDeleteConfirm(null);
         
         setShowSuccessToast('Cliente eliminado correctamente de la base de datos.');
@@ -369,6 +319,7 @@ export default function Clientes({ searchTerm = '' }: ClientesProps) {
 
   const handleRegisterAbono = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isAdmin) return;
     if (!selectedClient) return;
 
     const clientRIF = selectedClient.rif;
@@ -431,32 +382,12 @@ export default function Clientes({ searchTerm = '' }: ClientesProps) {
     setCreditsMap(nextMap);
     localStorage.setItem('stockmaster_client_credits_local', JSON.stringify(nextMap));
 
-    // Guardar en bitácora local de auditoría
-    const newAuditLog = {
-      id: 'local_log_' + crypto.randomUUID(),
-      action: 'POS_ABONO_CREDITO_CLIENTE',
-      details: JSON.stringify({
-        clientId: selectedClient.id,
-        clientName: selectedClient.name,
-        rif: clientRIF,
-        abonoAmountUSD: amountVal,
-        paymentMethod: abonoForm.method,
-        remainingBalanceUSD: nextClientData.balanceUSD
-      }, null, 2),
-      ipAddress: '127.0.0.1 (Local)',
-      userAgent: navigator.userAgent + ' (PWA Local)',
-      createdAt: new Date().toISOString(),
-      user: {
-        name: 'Administrador Local',
-        email: 'admin@stockmaster.pro',
-        role: 'ADMIN'
-      }
-    };
-
-    const savedLocal = localStorage.getItem('stockmaster_local_audit_logs');
-    const localLogs = savedLocal ? JSON.parse(savedLocal) : [];
-    localLogs.unshift(newAuditLog);
-    localStorage.setItem('stockmaster_local_audit_logs', JSON.stringify(localLogs));
+    logAuditEvent(user, 'POS_ABONO_CREDITO_CLIENTE', {
+      clientId: selectedClient.id,
+      clientName: selectedClient.name,
+      amount: amountVal,
+      paymentMethod: abonoForm.method
+    });
 
     setAbonoForm({ amount: '', method: 'EFECTIVO' });
     setShowSuccessToast(`Abono de $${amountVal.toFixed(2)} registrado exitosamente.`);
@@ -464,20 +395,27 @@ export default function Clientes({ searchTerm = '' }: ClientesProps) {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', width: '100%', paddingBottom: '30px' }}>
+    <div className="view-container-layout" style={{ display: 'flex', flexDirection: 'column', gap: '24px', width: '100%', paddingBottom: '30px' }}>
       
       {/* SECCIÓN 1: CABECERA Y FILTROS */}
-      <div className="widget" style={{ padding: '20px', borderRadius: 'var(--card-radius)' }}>
+      <div className="widget view-header-widget" style={{ padding: '20px', borderRadius: 'var(--card-radius)' }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '16px' }}>
           
-          {/* Título */}
-          <div>
-            <h2 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text-primary)', margin: 0, fontFamily: 'var(--font-main)' }}>
-              👥 Directorio de Clientes y RIF Fiscal
-            </h2>
-            <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>
-              Base de datos integrada para la facturación fiscal de compras, ventas al mayor y control comercial.
-            </p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            <div className="info-tooltip-wrapper">
+              <Info size={18} className="info-tooltip-icon" style={{ color: 'var(--text-secondary)', cursor: 'help', opacity: 0.8 }} />
+              <span className="tooltip-text">
+                Base de datos integrada para la facturación fiscal de compras, ventas al mayor y control comercial.
+              </span>
+            </div>
+            <span className="view-header-pill pill-teal">
+              {clients.length} Clientes
+            </span>
+            {Object.values(creditsMap).filter(c => c.balanceUSD > 0).length > 0 && (
+              <span className="view-header-pill pill-yellow">
+                {Object.values(creditsMap).filter(c => c.balanceUSD > 0).length} Con Deuda
+              </span>
+            )}
           </div>
 
           {/* Controles */}
@@ -545,7 +483,7 @@ export default function Clientes({ searchTerm = '' }: ClientesProps) {
       )}
 
       {/* SECCIÓN 2: LISTADO DE CLIENTES EN TABLA PREMIUM */}
-      <div className="widget" style={{ padding: '24px', borderRadius: 'var(--card-radius)', display: 'flex', flexDirection: 'column' }}>
+      <div className="widget view-content-widget" style={{ padding: '24px', borderRadius: 'var(--card-radius)', display: 'flex', flexDirection: 'column' }}>
         <div className="details-table-wrapper" style={{ overflowX: 'auto' }}>
           <table className="details-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12.5px' }}>
             <thead>
@@ -557,13 +495,13 @@ export default function Clientes({ searchTerm = '' }: ClientesProps) {
                 <th style={{ padding: '10px 8px', fontWeight: 800 }}>DIRECCIÓN FISCAL</th>
                 <th style={{ padding: '10px 8px', fontWeight: 800, textAlign: 'center' }}>CATEGORÍA</th>
                 <th style={{ padding: '10px 8px', fontWeight: 800, textAlign: 'center' }}>ESTADO</th>
-                <th style={{ padding: '10px 8px', fontWeight: 800, textAlign: 'center' }}>ACCIONES</th>
+                {(isAdmin || user.role === 'AUDITOR') && <th style={{ padding: '10px 8px', fontWeight: 800, textAlign: 'center' }}>ACCIONES</th>}
               </tr>
             </thead>
             <tbody>
               {filteredClients.length === 0 ? (
                 <tr>
-                  <td colSpan={8} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-secondary)', fontWeight: 600 }}>
+                  <td colSpan={(isAdmin || user.role === 'AUDITOR') ? 8 : 7} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-secondary)', fontWeight: 600 }}>
                     No se encontraron clientes registrados en la base local.
                   </td>
                 </tr>
@@ -612,34 +550,40 @@ export default function Clientes({ searchTerm = '' }: ClientesProps) {
                           {client.status}
                         </span>
                       </td>
-                      <td style={{ padding: '12px 8px', textAlign: 'center' }}>
-                        <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
-                          <button
-                            onClick={() => handleViewCreditClick(client)}
-                            className="btn-pill-dark"
-                            style={{ padding: '4px', borderRadius: '6px', minWidth: '24px', height: '24px', backgroundColor: 'rgba(14,165,164,0.1)', color: 'var(--brand-teal)' }}
-                            title="Ver Historial / Cuentas por Cobrar"
-                          >
-                            <CreditCard size={12} />
-                          </button>
-                          <button
-                            onClick={() => handleEditClient(client)}
-                            className="btn-pill-dark"
-                            style={{ padding: '4px', borderRadius: '6px', minWidth: '24px', height: '24px', backgroundColor: 'var(--bg-input)' }}
-                            title="Editar Datos"
-                          >
-                            <Edit size={12} />
-                          </button>
-                          <button
-                            onClick={() => setShowDeleteConfirm(client)}
-                            className="btn-pill-dark"
-                            style={{ padding: '4px', borderRadius: '6px', minWidth: '24px', height: '24px', backgroundColor: 'rgba(239,68,68,0.1)', color: '#ef4444' }}
-                            title="Eliminar Cliente"
-                          >
-                            <Trash2 size={12} />
-                          </button>
-                        </div>
-                      </td>
+                      {(isAdmin || user.role === 'AUDITOR') && (
+                        <td style={{ padding: '12px 8px', textAlign: 'center' }}>
+                          <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
+                            <button
+                              onClick={() => handleViewCreditClick(client)}
+                              className="btn-pill-dark"
+                              style={{ padding: '4px', borderRadius: '6px', minWidth: '24px', height: '24px', backgroundColor: 'rgba(14,165,164,0.1)', color: 'var(--brand-teal)' }}
+                              title="Ver Historial / Cuentas por Cobrar"
+                            >
+                              <CreditCard size={12} />
+                            </button>
+                            {isAdmin && (
+                              <button
+                                onClick={() => handleEditClient(client)}
+                                className="btn-pill-dark"
+                                style={{ padding: '4px', borderRadius: '6px', minWidth: '24px', height: '24px', backgroundColor: 'var(--bg-input)' }}
+                                title="Editar Datos"
+                              >
+                                <Edit size={12} />
+                              </button>
+                            )}
+                            {isAdmin && (
+                              <button
+                                onClick={() => setShowDeleteConfirm(client)}
+                                className="btn-pill-dark"
+                                style={{ padding: '4px', borderRadius: '6px', minWidth: '24px', height: '24px', backgroundColor: 'rgba(239,68,68,0.1)', color: '#ef4444' }}
+                                title="Eliminar Cliente"
+                              >
+                                <Trash2 size={12} />
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      )}
                     </tr>
                   );
                 })
@@ -684,29 +628,32 @@ export default function Clientes({ searchTerm = '' }: ClientesProps) {
 
       {/* MODAL MODULAR 1: NUEVO CLIENTE (GLASSMORPHISM) */}
       {showAddModal && (
-        <div style={{
+        <div className="modal-registration-backdrop" style={{
           position: 'fixed',
           top: 0, left: 0, right: 0, bottom: 0,
           backgroundColor: 'rgba(0, 0, 0, 0.65)',
           backdropFilter: 'blur(8px)',
           display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
+          justifyContent: isMobile ? 'flex-start' : 'center',
+          alignItems: isMobile ? 'stretch' : 'center',
+          flexDirection: isMobile ? 'column' : 'row',
           zIndex: 1500,
-          padding: '20px'
+          padding: isMobile ? 0 : '20px'
         }}>
           
-          <div className="widget" style={{
+          <div className={`widget ${!isMobile ? 'animate-entrance' : ''} modal-registration-content`} style={{
             width: '100%',
-            maxWidth: '520px',
+            maxWidth: isMobile ? '100%' : '520px',
+            padding: 0,
             backgroundColor: 'var(--bg-card)',
-            borderRadius: 'var(--card-radius)',
-            border: '1.5px solid var(--border-color)',
-            boxShadow: '0 20px 50px rgba(0, 0, 0, 0.4)',
+            borderRadius: isMobile ? 0 : 'var(--card-radius)',
+            border: isMobile ? 'none' : '1.5px solid var(--border-color)',
+            boxShadow: isMobile ? 'none' : '0 20px 50px rgba(0, 0, 0, 0.4)',
             overflow: 'hidden',
             display: 'flex',
             flexDirection: 'column',
-            animation: 'entrance 0.2s cubic-bezier(0.16, 1, 0.3, 1)'
+            height: isMobile ? '100dvh' : 'auto',
+            maxHeight: isMobile ? '100dvh' : '90vh'
           }}>
             
             {/* Cabecera */}
@@ -726,8 +673,8 @@ export default function Clientes({ searchTerm = '' }: ClientesProps) {
             </div>
 
             {/* Formulario */}
-            <form onSubmit={handleAddClient}>
-              <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '14px', fontSize: '13px' }}>
+            <form onSubmit={handleAddClient} style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', flex: 1, minHeight: 0 }}>
+              <div style={{ padding: '24px', paddingBottom: isMobile ? '90px' : '24px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '14px', fontSize: '13px', flex: 1 }}>
                 
                 <div style={{ display: 'grid', gridTemplateColumns: '130px 1fr', gap: '10px' }}>
                   <div>
@@ -793,15 +740,15 @@ export default function Clientes({ searchTerm = '' }: ClientesProps) {
                   <label style={{ fontWeight: 800, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', textTransform: 'uppercase', fontSize: '10px' }}>
                     Categoría de Facturación
                   </label>
-                  <select 
+                  <CustomSelect 
                     value={newClient.clientType}
-                    onChange={(e) => setNewClient({ ...newClient, clientType: e.target.value as 'Regular' | 'Mayorista' })}
-                    className="dropdown-select"
-                    style={{ width: '100%', padding: '10px', height: '40px', borderRadius: '12px' }}
-                  >
-                    <option value="Regular">Cliente Detal (Regular)</option>
-                    <option value="Mayorista">Cliente Contribuyente (Mayorista/RIF)</option>
-                  </select>
+                    onChange={(val) => setNewClient({ ...newClient, clientType: val as 'Regular' | 'Mayorista' })}
+                    options={[
+                      { value: 'Regular', label: 'Cliente Detal (Regular)' },
+                      { value: 'Mayorista', label: 'Cliente Contribuyente (Mayorista/RIF)' }
+                    ]}
+                    style={{ width: '100%' }}
+                  />
                 </div>
 
                 <div>
@@ -821,7 +768,15 @@ export default function Clientes({ searchTerm = '' }: ClientesProps) {
               </div>
 
               {/* Botones de acción */}
-              <div style={{ padding: '16px 24px', borderTop: '1.5px solid var(--border-color)', display: 'flex', justifyContent: 'flex-end', gap: '10px', backgroundColor: 'var(--bg-input)' }}>
+              <div style={{
+                padding: '16px 24px',
+                borderTop: '1.5px solid var(--border-color)',
+                display: 'flex',
+                justifyContent: 'flex-end',
+                gap: '10px',
+                backgroundColor: 'var(--bg-input)',
+                ...(isMobile ? { position: 'fixed' as const, bottom: 0, left: 0, right: 0, zIndex: 10 } : {})
+              }}>
                 <button
                   type="button"
                   onClick={() => setShowAddModal(false)}
@@ -847,29 +802,32 @@ export default function Clientes({ searchTerm = '' }: ClientesProps) {
 
       {/* MODAL MODULAR 1B: EDITAR CLIENTE (GLASSMORPHISM) */}
       {showEditModal && (
-        <div style={{
+        <div className="modal-registration-backdrop" style={{
           position: 'fixed',
           top: 0, left: 0, right: 0, bottom: 0,
           backgroundColor: 'rgba(0, 0, 0, 0.65)',
           backdropFilter: 'blur(8px)',
           display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
+          justifyContent: isMobile ? 'flex-start' : 'center',
+          alignItems: isMobile ? 'stretch' : 'center',
+          flexDirection: isMobile ? 'column' : 'row',
           zIndex: 1500,
-          padding: '20px'
+          padding: isMobile ? 0 : '20px'
         }}>
           
-          <div className="widget" style={{
+          <div className={`widget ${!isMobile ? 'animate-entrance' : ''} modal-registration-content`} style={{
             width: '100%',
-            maxWidth: '520px',
+            maxWidth: isMobile ? '100%' : '520px',
+            padding: 0,
             backgroundColor: 'var(--bg-card)',
-            borderRadius: 'var(--card-radius)',
-            border: '1.5px solid var(--border-color)',
-            boxShadow: '0 20px 50px rgba(0, 0, 0, 0.4)',
+            borderRadius: isMobile ? 0 : 'var(--card-radius)',
+            border: isMobile ? 'none' : '1.5px solid var(--border-color)',
+            boxShadow: isMobile ? 'none' : '0 20px 50px rgba(0, 0, 0, 0.4)',
             overflow: 'hidden',
             display: 'flex',
             flexDirection: 'column',
-            animation: 'entrance 0.2s cubic-bezier(0.16, 1, 0.3, 1)'
+            height: isMobile ? '100dvh' : 'auto',
+            maxHeight: isMobile ? '100dvh' : '90vh'
           }}>
             
             {/* Cabecera */}
@@ -889,8 +847,8 @@ export default function Clientes({ searchTerm = '' }: ClientesProps) {
             </div>
 
             {/* Formulario */}
-            <form onSubmit={handleSaveEditClient}>
-              <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '14px', fontSize: '13px' }}>
+            <form onSubmit={handleSaveEditClient} style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', flex: 1, minHeight: 0 }}>
+              <div style={{ padding: '24px', paddingBottom: isMobile ? '90px' : '24px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '14px', fontSize: '13px', flex: 1 }}>
                 
                 <div style={{ display: 'grid', gridTemplateColumns: '130px 1fr', gap: '10px' }}>
                   <div>
@@ -954,16 +912,16 @@ export default function Clientes({ searchTerm = '' }: ClientesProps) {
                   <label style={{ fontWeight: 800, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', textTransform: 'uppercase', fontSize: '10px' }}>
                     Categoría de Facturación
                   </label>
-                  <select 
+                  <CustomSelect 
                     value={editClientForm.clientType}
-                    onChange={(e) => setEditClientForm({ ...editClientForm, clientType: e.target.value as 'Regular' | 'Mayorista' })}
-                    className="dropdown-select"
-                    style={{ width: '100%', padding: '10px', height: '40px', borderRadius: '12px', backgroundColor: 'rgba(255, 255, 255, 0.05)', cursor: 'not-allowed' }}
-                    disabled
-                  >
-                    <option value="Regular">Cliente Detal (Regular)</option>
-                    <option value="Mayorista">Cliente Contribuyente (Mayorista/RIF)</option>
-                  </select>
+                    onChange={(val) => setEditClientForm({ ...editClientForm, clientType: val as 'Regular' | 'Mayorista' })}
+                    options={[
+                      { value: 'Regular', label: 'Cliente Detal (Regular)' },
+                      { value: 'Mayorista', label: 'Cliente Contribuyente (Mayorista/RIF)' }
+                    ]}
+                    style={{ width: '100%' }}
+                    disabled={true}
+                  />
                 </div>
 
                 <div>
@@ -983,7 +941,15 @@ export default function Clientes({ searchTerm = '' }: ClientesProps) {
               </div>
 
               {/* Botones de acción */}
-              <div style={{ padding: '16px 24px', borderTop: '1.5px solid var(--border-color)', display: 'flex', justifyContent: 'flex-end', gap: '10px', backgroundColor: 'var(--bg-input)' }}>
+              <div style={{
+                padding: '16px 24px',
+                borderTop: '1.5px solid var(--border-color)',
+                display: 'flex',
+                justifyContent: 'flex-end',
+                gap: '10px',
+                backgroundColor: 'var(--bg-input)',
+                ...(isMobile ? { position: 'fixed' as const, bottom: 0, left: 0, right: 0, zIndex: 10 } : {})
+              }}>
                 <button
                   type="button"
                   onClick={() => { setShowEditModal(false); setEditingClient(null); }}
@@ -1232,7 +1198,7 @@ export default function Clientes({ searchTerm = '' }: ClientesProps) {
                   </div>
 
                   {/* Formulario Registrar Abono */}
-                  {(creditsMap[selectedClient.rif]?.balanceUSD || 0) > 0 && (
+                  {isAdmin && (creditsMap[selectedClient.rif]?.balanceUSD || 0) > 0 && (
                     <form onSubmit={handleRegisterAbono} style={{
                       backgroundColor: 'rgba(14,165,164,0.04)',
                       border: '1.5px solid rgba(14,165,164,0.15)',
@@ -1267,17 +1233,17 @@ export default function Clientes({ searchTerm = '' }: ClientesProps) {
                           <label style={{ fontWeight: 800, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px', textTransform: 'uppercase', fontSize: '9px' }}>
                             Método de Pago *
                           </label>
-                          <select
+                          <CustomSelect
                             value={abonoForm.method}
-                            onChange={(e) => setAbonoForm({ ...abonoForm, method: e.target.value })}
-                            className="dropdown-select"
-                            style={{ width: '100%', padding: '8px', height: '36px', borderRadius: '10px' }}
-                          >
-                            <option value="EFECTIVO">Efectivo USD</option>
-                            <option value="PAGO_MOVIL">Pago Móvil VES</option>
-                            <option value="PUNTO_DE_VENTA">Punto de Venta VES</option>
-                            <option value="TRANSFERENCIA">Transferencia Bancaria</option>
-                          </select>
+                            onChange={(val) => setAbonoForm({ ...abonoForm, method: val })}
+                            options={[
+                              { value: 'EFECTIVO', label: 'Efectivo USD' },
+                              { value: 'PAGO_MOVIL', label: 'Pago Móvil VES' },
+                              { value: 'PUNTO_DE_VENTA', label: 'Punto de Venta VES' },
+                              { value: 'TRANSFERENCIA', label: 'Transferencia Bancaria' }
+                            ]}
+                            style={{ width: '100%' }}
+                          />
                         </div>
                         <button
                           type="submit"
