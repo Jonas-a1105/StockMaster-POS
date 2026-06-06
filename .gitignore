@@ -9,4 +9,15 @@ Thumbs.db
 coverage/
 .turbo/
 
+# Notas/artefactos locales de desarrollo (no son parte del código)
+/error.txt
+/problema.txt
+/ANALISIS*.md
+/license-generator.html
 
+# Logs/artefactos generados por el servidor NestJS
+/server/logs.txt
+/server/server-out.txt
+/server/server-err.txt
+/server/smoke.out
+/server/smoke.err

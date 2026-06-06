@@ -1,7 +1,0 @@
-[31m[Nest] 12336  - [39m05/06/2026, 20:58:43 [31m  ERROR[39m [38;5;3m[GlobalExceptionFilter] [39m[31m[401] Credenciales de acceso inválidas.[39m
-UnauthorizedException: Credenciales de acceso inválidas.
-    at AuthService.recordFailedAttempt (C:\Users\Usuario\.gemini\antigravity\scratch\stockmaster-pos\server\dist\src\auth\auth.service.js:173:15)
-    at async AuthService.validateUser (C:\Users\Usuario\.gemini\antigravity\scratch\stockmaster-pos\server\dist\src\auth\auth.service.js:227:13)
-    at async AuthController.login (C:\Users\Usuario\.gemini\antigravity\scratch\stockmaster-pos\server\dist\src\auth\auth.controller.js:48:22)
-    at async C:\Users\Usuario\.gemini\antigravity\scratch\stockmaster-pos\server\node_modules\@nestjs\core\router\router-execution-context.js:46:28
-    at async Object.<anonymous> (C:\Users\Usuario\.gemini\antigravity\scratch\stockmaster-pos\server\node_modules\@nestjs\core\router\router-proxy.js:9:17)
