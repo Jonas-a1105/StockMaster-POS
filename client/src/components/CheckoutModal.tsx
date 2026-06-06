@@ -514,6 +514,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
             CANCELAR
           </button>
           <button
+            data-tour="confirm-payment-btn"
             onClick={onConfirmCheckout}
             disabled={isCredit ? !isCreditApproved : remainingUSD > 0}
             className="btn-yellow"

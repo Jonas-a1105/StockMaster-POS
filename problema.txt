@@ -1,0 +1,63 @@
+[plugin:vite:oxc] Transform failed with 15 errors:
+
+[PARSE_ERROR] Identifier `useState` has already been declared
+    ╭─[ src/App.tsx:1:10 ]
+    │
+  1 │ import { useState, useEffect, useRef, useCallback } from 'react';
+    │          ────┬───  
+    │              ╰───── `useState` has already been declared here
+    │ 
+ 14 │ import { useState, useEffect, useRef, useCallback } from 'react';
+    │          ────┬───  
+    │              ╰───── It can not be redeclared here
+────╯
+
+[PARSE_ERROR] Identifier `useEffect` has already been declared
+    ╭─[ src/App.tsx:1:20 ]
+    │
+  1 │ import { useState, useEffect, useRef, useCallback } from 'react';
+    │                    ────┬────  
+    │                        ╰────── `useEffect` has already been declared here
+    │ 
+ 14 │ import { useState, useEffect, useRef, useCallback } from 'react';
+    │                    ────┬────  
+    │                        ╰────── It can not be redeclared here
+────╯
+
+[PARSE_ERROR] Identifier `useRef` has already been declared
+    ╭─[ src/App.tsx:1:31 ]
+    │
+  1 │ import { useState, useEffect, useRef, useCallback } from 'react';
+    │                               ───┬──  
+    │                                  ╰──── `useRef` has already been declared here
+    │ 
+ 14 │ import { useState, useEffect, useRef, useCallback } from 'react';
+    │                               ───┬──  
+    │                                  ╰──── It can not be redeclared here
+────╯
+
+[PARSE_ERROR] Identifier `useCallback` has already been declared
+    ╭─[ src/App.tsx:1:39 ]
+    │
+  1 │ import { useState, useEffect, useRef, useCallback } from 'react';
+    │                                       ─────┬─────  
+    │                                            ╰─────── `useCallback` has already been declared here
+    │ 
+ 14 │ import { useState, useEffect, useRef, useCallback } from 'react';
+    │                                       ─────┬─────  
+    │                                            ╰─────── It can not be redeclared here
+────╯
+
+[PARSE_ERROR] Identifier `ThemeProvider` has already been declared
+    ╭─[ src/App.tsx:2:10 ]
+    │
+  2 │ import { ThemeProvider } from './contexts/ThemeContext';
+    │          ──────┬──────  
+    │                ╰──────── `ThemeProvider` has already been declared here
+    │ 
+ 15 │ import { ThemeProvider } from './contexts/ThemeContext';
+    │          ──────┬──────  
+    │                ╰──────── It can not be redeclared here
+────╯
+
+...

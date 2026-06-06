@@ -1,0 +1,70 @@
+name: Release Tauri App
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build frontend
+        working-directory: client
+        run: |
+          npm ci
+          npm run build
+
+      - name: Build server
+        working-directory: server
+        run: |
+          npm ci
+          npm run build
+
+      - name: Build Tauri app
+        working-directory: client
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          NODE_ENV: production
+        run: npm run tauri:build
+
+      - name: Generate updater.json
+        working-directory: client/src-tauri
+        run: |
+          $VERSION = "${{ github.ref_name }}" -replace '^v', ''
+          $MSI = Get-ChildItem -Path "target/release/bundle/msi/*.msi" | Select-Object -First 1
+          $SIG = "$($MSI.FullName).sig"
+          if (Test-Path $SIG) {
+            $SIGNATURE = Get-Content $SIG -Raw
+          } else {
+            $SIGNATURE = ""
+          }
+          $UPDATER = @{
+            version = $VERSION
+            notes = "Release ${{ github.ref_name }}"
+            platforms = @{
+              "windows-x86_64" = @{
+                signature = $SIGNATURE
+                url = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$($MSI.Name)"
+              }
+            }
+          }
+          $UPDATER | ConvertTo-Json | Set-Content "../../updater.json"
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            client/src-tauri/target/release/bundle/msi/*.msi
+            updater.json

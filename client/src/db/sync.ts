@@ -1,6 +1,7 @@
 import { getDatabase } from './database';
 import { API_URL } from '../config';
 import { getValidToken } from './auth';
+import { io, type Socket } from 'socket.io-client';
 
 export interface SyncState {
   isSyncing: boolean;
@@ -23,6 +24,7 @@ class SyncWorker {
   private syncInterval: any = null;
   private boundGoOnline: (() => void) | null = null;
   private boundGoOffline: (() => void) | null = null;
+  private wsSocket: Socket | null = null;
 
   constructor() {
     if (typeof window !== 'undefined') {
@@ -30,10 +32,12 @@ class SyncWorker {
         console.log('🌐 Conexión de red recuperada. Iniciando sincronización automática...');
         this.startInterval();
         this.sync();
+        this.startWebSocket();
       };
       this.boundGoOffline = () => {
         console.log('🔌 Dispositivo sin conexión. Deteniendo sincronización periódica.');
         this.stopInterval();
+        this.stopWebSocket();
       };
 
       window.addEventListener('online', this.boundGoOnline);
@@ -41,10 +45,33 @@ class SyncWorker {
 
       if (navigator.onLine) {
         this.startInterval();
+        this.startWebSocket();
       }
     }
 
     this.updatePendingSalesCount();
+  }
+
+  private startWebSocket() {
+    if (this.wsSocket?.connected) return;
+    this.wsSocket = io(API_URL, {
+      path: '/ws',
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionDelay: 2000,
+    });
+    this.wsSocket.on('sync', (data: { collection: string }) => {
+      console.log(`[WS] Cambio detectado en "${data.collection}". Sincronizando...`);
+      this.sync();
+    });
+    this.wsSocket.on('connect', () => console.log('[WS] Conectado a sincronización en tiempo real'));
+    this.wsSocket.on('disconnect', () => console.log('[WS] Desconectado del servidor de sincronización'));
+    this.wsSocket.on('connect_error', () => { /* offline, ignorar */ });
+  }
+
+  private stopWebSocket() {
+    this.wsSocket?.disconnect();
+    this.wsSocket = null;
   }
 
   private startInterval() {
@@ -87,8 +114,12 @@ class SyncWorker {
         selector: { pendingSync: true }
       }).exec();
       this.setState({ pendingSalesCount: pendingSales.length });
-    } catch (err) {
-      console.error('Error calculando ventas pendientes:', err);
+    } catch (err: any) {
+      const errMsg = err?.message || '';
+      const isClosedDbError = errMsg.includes('closed') || errMsg.includes('removed') || errMsg.includes('COL21') || errMsg.includes('DB8');
+      if (!isClosedDbError) {
+        console.error('Error calculando ventas pendientes:', err);
+      }
     }
   }
 
@@ -209,25 +240,35 @@ class SyncWorker {
       if (pullData.success) {
         const { products, serverTime } = pullData;
         
-        if (products && products.length > 0) {
-          console.log(`[Sync] PULL: Recibidos ${products.length} productos modificados. Upserting...`);
-          
-          for (const prod of products) {
-            // Upsert en IndexedDB local
-            await db.products.upsert({
-              id: prod.id,
-              code: prod.code,
-              name: prod.name,
-              category: prod.category,
-              price: Number(prod.price),
-              cost: Number(prod.cost),
-              stock: Number(prod.stock),
-              minStock: Number(prod.minStock),
-              version: Number(prod.version),
-              updatedAt: new Date(prod.updatedAt).toISOString()
-            });
+          if (products && products.length > 0) {
+            console.log(`[Sync] PULL: Recibidos ${products.length} productos modificados. Upserting...`);
+            
+            for (const prod of products) {
+              // Soft-delete: si el producto fue eliminado en el servidor, eliminarlo localmente
+              if (prod.deletedAt) {
+                const localDoc = await db.products.findOne({ selector: { id: prod.id } }).exec();
+                if (localDoc) {
+                  await localDoc.remove();
+                  console.log(`[Sync] Producto ${prod.id} eliminado localmente (soft-delete del servidor).`);
+                }
+                continue;
+              }
+
+              // Upsert en IndexedDB local
+              await db.products.upsert({
+                id: prod.id,
+                code: prod.code,
+                name: prod.name,
+                category: prod.category,
+                price: Number(prod.price),
+                cost: Number(prod.cost),
+                stock: Number(prod.stock),
+                minStock: Number(prod.minStock),
+                version: Number(prod.version),
+                updatedAt: new Date(prod.updatedAt).toISOString()
+              });
+            }
           }
-        }
 
         // ----------------------------------------------------
         // D. PUSH: Sincronizar Clientes Creados/Modificados Localmente
@@ -398,6 +439,64 @@ class SyncWorker {
           }
         }
 
+        // ----------------------------------------------------
+        // J. PUSH: Sincronizar Gastos Offline
+        // ----------------------------------------------------
+        const pendingExpenses = await db.expenses.find({
+          selector: { pendingSync: true }
+        }).exec();
+
+        if (pendingExpenses.length > 0) {
+          console.log(`[Sync] PUSH: Enviando ${pendingExpenses.length} gastos offline al servidor...`);
+          const expensesData = pendingExpenses.map(doc => doc.toJSON());
+          const response = await fetch(`${API_URL}/sync/expenses/push`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+            body: JSON.stringify({ expenses: expensesData })
+          });
+          const data = await response.json();
+          if (response.ok && data.success) {
+            const processedIds: string[] = data.processedIds || [];
+            for (const id of processedIds) {
+              const doc = await db.expenses.findOne({ selector: { id } }).exec();
+              if (doc) await doc.patch({ pendingSync: false });
+            }
+          } else {
+            console.error('[Sync] PUSH Gastos falló:', data.message);
+          }
+        }
+
+        // ----------------------------------------------------
+        // K. PULL: Descargar Gastos del Servidor
+        // ----------------------------------------------------
+        console.log(`[Sync] PULL: Descargando cambios de gastos desde ${lastSynced}...`);
+        const pullExpensesResponse = await fetch(`${API_URL}/sync/expenses/pull`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify({ lastSyncedAt: lastSynced })
+        });
+        const pullExpensesData = await pullExpensesResponse.json();
+        if (pullExpensesResponse.ok && pullExpensesData.success) {
+          const { expenses } = pullExpensesData;
+          if (expenses && expenses.length > 0) {
+            console.log(`[Sync] PULL: Recibidos ${expenses.length} gastos modificados. Upserting...`);
+            for (const e of expenses) {
+              await db.expenses.upsert({
+                id: e.id,
+                description: e.description,
+                amount: Number(e.amount),
+                category: e.category || 'General',
+                date: new Date(e.date).toISOString(),
+                pendingSync: false,
+                createdAt: new Date(e.createdAt).toISOString(),
+                updatedAt: new Date(e.updatedAt).toISOString()
+              });
+            }
+          }
+        } else {
+          console.error('[Sync] PULL Gastos falló:', pullExpensesData.message);
+        }
+
         // Guarda la nueva fecha de sincronización
         localStorage.setItem('last_synced_at', serverTime);
         this.setState({
@@ -411,18 +510,34 @@ class SyncWorker {
       }
 
     } catch (err: any) {
-      console.error('❌ Error general durante la sincronización:', err.message);
-      this.setState({
-        isSyncing: false,
-        error: err.message || 'Error de conexión'
-      });
+      const errMsg = err?.message || '';
+      const isClosedDbError = errMsg.includes('closed') || errMsg.includes('removed') || errMsg.includes('COL21') || errMsg.includes('DB8');
+
+      if (isClosedDbError) {
+        console.warn('⚠️ Sincronización abortada: La base de datos local fue cerrada o reiniciada.');
+        this.setState({
+          isSyncing: false,
+          error: null
+        });
+      } else {
+        console.error('❌ Error general durante la sincronización:', err.message);
+        this.setState({
+          isSyncing: false,
+          error: err.message || 'Error de conexión'
+        });
+      }
     } finally {
-      await this.updatePendingSalesCount();
+      try {
+        await this.updatePendingSalesCount();
+      } catch (e) {
+        // Ignorar si la base de datos se cerró
+      }
     }
   }
 
   destroy() {
     this.stopInterval();
+    this.stopWebSocket();
     if (typeof window !== 'undefined') {
       if (this.boundGoOnline) window.removeEventListener('online', this.boundGoOnline);
       if (this.boundGoOffline) window.removeEventListener('offline', this.boundGoOffline);

@@ -1,5 +1,6 @@
 import { Controller, Post, Body, Req, UseGuards, BadRequestException } from '@nestjs/common';
 import { SyncService } from './sync.service';
+import { SyncGateway } from './sync.gateway';
 import { AuthGuard } from '../auth/auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
@@ -13,6 +14,7 @@ import {
   SyncPurchaseSchema,
   SyncPayrollSchema,
   SyncPullSchema,
+  SyncExpenseSchema,
 } from './sync.dto';
 
 @Controller('sync')
@@ -20,6 +22,7 @@ import {
 export class SyncController {
   constructor(
     private syncService: SyncService,
+    private syncGateway: SyncGateway,
   ) {}
 
   @Post('products/push')
@@ -37,6 +40,7 @@ export class SyncController {
     const ipAddress = req.ip || 'unknown';
     const userAgent = (req.headers['user-agent'] as string) || 'RxDB Sync Client';
     const result = await this.syncService.pushProducts(parseResult.data, user.sub, ipAddress, userAgent);
+    this.syncGateway.emitSync('products');
     return { success: true, ...result };
   }
 
@@ -65,6 +69,7 @@ export class SyncController {
     const ipAddress = req.ip || 'unknown';
     const userAgent = (req.headers['user-agent'] as string) || 'RxDB Sync Client';
     const result = await this.syncService.pushSales(parseResult.data, user.sub, ipAddress, userAgent);
+    this.syncGateway.emitSync('sales');
     return { success: true, ...result };
   }
 
@@ -82,6 +87,7 @@ export class SyncController {
     const ipAddress = req.ip || 'unknown';
     const userAgent = (req.headers['user-agent'] as string) || 'RxDB Sync Client';
     const result = await this.syncService.pushClients(parseResult.data, user.sub, ipAddress, userAgent);
+    this.syncGateway.emitSync('clients');
     return { success: true, ...result };
   }
 
@@ -111,6 +117,7 @@ export class SyncController {
     const ipAddress = req.ip || 'unknown';
     const userAgent = (req.headers['user-agent'] as string) || 'RxDB Sync Client';
     const result = await this.syncService.pushSuppliers(parseResult.data, user.sub, ipAddress, userAgent);
+    this.syncGateway.emitSync('suppliers');
     return { success: true, ...result };
   }
 
@@ -140,6 +147,7 @@ export class SyncController {
     const ipAddress = req.ip || 'unknown';
     const userAgent = (req.headers['user-agent'] as string) || 'RxDB Sync Client';
     const result = await this.syncService.pushPurchases(parseResult.data, user.sub, ipAddress, userAgent);
+    this.syncGateway.emitSync('purchases');
     return { success: true, ...result };
   }
 
@@ -169,6 +177,7 @@ export class SyncController {
     const ipAddress = req.ip || 'unknown';
     const userAgent = (req.headers['user-agent'] as string) || 'RxDB Sync Client';
     const result = await this.syncService.pushPayroll(parseResult.data, user.sub, ipAddress, userAgent);
+    this.syncGateway.emitSync('payroll');
     return { success: true, ...result };
   }
 
@@ -180,6 +189,36 @@ export class SyncController {
       throw new BadRequestException('Datos de sincronización inválidos: ' + parseResult.error.issues.map(e => e.message).join(', '));
     }
     const result = await this.syncService.pullPayroll(parseResult.data.lastSyncedAt);
+    return { success: true, ...result };
+  }
+
+  @Post('expenses/push')
+  @Roles('ADMIN')
+  async pushExpenses(@Req() req: FastifyRequest, @Body() body: any) {
+    const { expenses } = body;
+    if (!expenses || !Array.isArray(expenses)) {
+      throw new BadRequestException('El cuerpo de la petición debe contener un arreglo de gastos.');
+    }
+    const parseResult = z.array(SyncExpenseSchema).safeParse(expenses);
+    if (!parseResult.success) {
+      throw new BadRequestException('Datos de gastos inválidos: ' + parseResult.error.issues.map(e => `${e.path.join('.')}: ${e.message}`).join(', '));
+    }
+    const user = (req as any).user;
+    const ipAddress = req.ip || 'unknown';
+    const userAgent = (req.headers['user-agent'] as string) || 'RxDB Sync Client';
+    const result = await this.syncService.pushExpenses(parseResult.data, user.sub, ipAddress, userAgent);
+    this.syncGateway.emitSync('expenses');
+    return { success: true, ...result };
+  }
+
+  @Post('expenses/pull')
+  @Roles('ADMIN', 'AUDITOR', 'CASHIER')
+  async pullExpenses(@Body() body: any) {
+    const parseResult = SyncPullSchema.safeParse(body);
+    if (!parseResult.success) {
+      throw new BadRequestException('Datos de sincronización inválidos: ' + parseResult.error.issues.map(e => e.message).join(', '));
+    }
+    const result = await this.syncService.pullExpenses(parseResult.data.lastSyncedAt);
     return { success: true, ...result };
   }
 }

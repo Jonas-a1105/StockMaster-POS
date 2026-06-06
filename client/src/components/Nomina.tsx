@@ -12,11 +12,11 @@ import {
   Percent, 
   Smartphone, 
   Check,
-  ChevronDown
+  ChevronDown,
+  CheckCircle
 } from 'lucide-react';
 import { getDatabase, type UserDocType, type PayrollDocType, type AttendanceDocType } from '../db/database';
 import { syncWorker } from '../db/sync';
-import { API_URL } from '../config';
 import { logAuditEvent } from '../utils/audit';
 import { useExchangeRate } from '../contexts/ExchangeRateContext';
 import { useTheme } from '../contexts/ThemeContext';
@@ -227,15 +227,37 @@ export default function Nomina({ user, searchTerm = '' }: NominaProps) {
     }
   }, [selectedEmployeeId, employees]);
 
+  // Deducciones de ley venezolana
+  const SSO_RATE = 0.04;
+  const LPH_RATE = 0.02;
+  const FAOV_RATE = 0.01;
+  const SALARY_CAP = 2000; // USD capped para SSO/LPH
+
+  const calcSSO = () => {
+    const base = Number(baseSalary) || 0;
+    return Math.min(base, SALARY_CAP) * SSO_RATE;
+  };
+  const calcLPH = () => {
+    const base = Number(baseSalary) || 0;
+    return Math.min(base, SALARY_CAP) * LPH_RATE;
+  };
+  const calcFAOV = () => {
+    const base = Number(baseSalary) || 0;
+    return base * FAOV_RATE;
+  };
+  const calcTotalDeductions = () => {
+    const manual = Number(deductions) || 0;
+    return manual + calcSSO() + calcLPH() + calcFAOV();
+  };
+
   // Compute Total Net Pay for Register Modal
   const calculatedTotalNet = () => {
     const base = Number(baseSalary) || 0;
     const bon = Number(bonuses) || 0;
-    const ded = Number(deductions) || 0;
     const advUSD = Number(advancesUSD) || 0;
     const advVES = Number(advancesVES) || 0;
     
-    return base + bon - ded - advUSD - (advVES / dolarRate);
+    return base + bon - calcTotalDeductions() - advUSD - (advVES / dolarRate);
   };
 
   const handleRegisterPayroll = async (e: React.FormEvent) => {
@@ -262,7 +284,7 @@ export default function Nomina({ user, searchTerm = '' }: NominaProps) {
         baseSalary: Number(baseSalary),
         hoursWorked: Number(hoursWorked),
         bonuses: Number(bonuses),
-        deductions: Number(deductions) + Number(advancesUSD) + (Number(advancesVES) / dolarRate),
+        deductions: calcTotalDeductions() + Number(advancesUSD) + (Number(advancesVES) / dolarRate),
         totalPaid,
         status: 'LIQUIDADO',
         paymentDate,
@@ -1241,6 +1263,39 @@ export default function Nomina({ user, searchTerm = '' }: NominaProps) {
                   </div>
                 </div>
 
+                {/* DEDUCCIONES DE LEY VENEZOLANA */}
+                {Number(baseSalary) > 0 && (
+                  <div style={{
+                    backgroundColor: 'rgba(239, 68, 68, 0.04)',
+                    border: '1px solid rgba(239, 68, 68, 0.15)',
+                    borderRadius: '12px',
+                    padding: '12px 14px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '6px'
+                  }}>
+                    <span style={{ fontSize: '10.5px', fontWeight: 800, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>
+                      Deducciones de Ley (automáticas)
+                    </span>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', fontSize: '12px' }}>
+                      <div style={{ color: 'var(--text-muted)' }}>SSO (4%): <strong style={{ color: 'var(--text-primary)' }}>{formatUSD(calcSSO())}</strong></div>
+                      <div style={{ color: 'var(--text-muted)' }}>LPH (2%): <strong style={{ color: 'var(--text-primary)' }}>{formatUSD(calcLPH())}</strong></div>
+                      <div style={{ color: 'var(--text-muted)' }}>FAOV (1%): <strong style={{ color: 'var(--text-primary)' }}>{formatUSD(calcFAOV())}</strong></div>
+                    </div>
+                    <div style={{
+                      borderTop: '1px solid var(--border-color)',
+                      paddingTop: '6px',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      fontSize: '12px',
+                      fontWeight: 800
+                    }}>
+                      <span style={{ color: 'var(--text-secondary)' }}>Total Ded. Ley:</span>
+                      <span style={{ color: '#ef4444' }}>{formatUSD(calcSSO() + calcLPH() + calcFAOV())}</span>
+                    </div>
+                  </div>
+                )}
+
                 {/* ADELANTOS / ANTICIPOS SECTION */}
                 <div style={{ backgroundColor: 'var(--bg-primary)', padding: '14px', borderRadius: '14px', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '10px' }}>
                   <span style={{ fontSize: '10.5px', fontWeight: 800, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>
@@ -1498,6 +1553,30 @@ export default function Nomina({ user, searchTerm = '' }: NominaProps) {
                     />
                   </div>
                 </div>
+
+                {/* DEDUCCIONES DE LEY (EDIT) */}
+                {Number(editPayrollForm.baseSalary) > 0 && (
+                  <div style={{
+                    backgroundColor: 'rgba(239, 68, 68, 0.04)',
+                    border: '1px solid rgba(239, 68, 68, 0.15)',
+                    borderRadius: '12px',
+                    padding: '10px 12px',
+                    fontSize: '12px'
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                      <span style={{ color: 'var(--text-muted)' }}>SSO (4%):</span>
+                      <span>{formatUSD(Math.min(Number(editPayrollForm.baseSalary), SALARY_CAP) * SSO_RATE)}</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                      <span style={{ color: 'var(--text-muted)' }}>LPH (2%):</span>
+                      <span>{formatUSD(Math.min(Number(editPayrollForm.baseSalary), SALARY_CAP) * LPH_RATE)}</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ color: 'var(--text-muted)' }}>FAOV (1%):</span>
+                      <span>{formatUSD(Number(editPayrollForm.baseSalary) * FAOV_RATE)}</span>
+                    </div>
+                  </div>
+                )}
 
                 {/* ADELANTOS EN EDICIÓN */}
                 <div style={{ backgroundColor: 'var(--bg-primary)', padding: '12px', borderRadius: '12px', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '8px' }}>

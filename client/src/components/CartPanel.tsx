@@ -464,6 +464,7 @@ export const CartPanel: React.FC<CartPanelProps> = ({
 
           {/* Proceed to Payment Button */}
           <button
+            data-tour="pos-checkout-btn"
             onClick={onOpenCheckout}
             disabled={cart.length === 0}
             className="btn-yellow"

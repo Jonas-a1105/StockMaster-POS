@@ -11,6 +11,12 @@ import ThemeCustomizer from './ThemeCustomizer';
 import RateCalculatorModal from './RateCalculatorModal';
 import KeyboardShortcuts from './KeyboardShortcuts';
 import AppUpdater, { type UpdateState } from './AppUpdater';
+import OnboardingTutorial from './OnboardingTutorial';
+
+// Licensing and lock screen imports
+import { getLicenseState, PLAN_LIMITS } from '../utils/license';
+import { PlanLockScreen } from './PlanLockScreen';
+import { SystemLockScreen } from './SystemLockScreen';
 
 const VentasPOS = lazy(() => import('./VentasPOS'));
 const Inventario = lazy(() => import('./Inventario'));
@@ -22,6 +28,9 @@ const Proveedores = lazy(() => import('./Proveedores'));
 const Compras = lazy(() => import('./Compras'));
 const CierreCaja = lazy(() => import('./CierreCaja'));
 const BusinessSettings = lazy(() => import('./BusinessSettings'));
+const UserAdmin = lazy(() => import('./UserAdmin'));
+const About = lazy(() => import('./About'));
+const UserProfile = lazy(() => import('./UserProfile'));
 
 // New high-fidelity visual sub-components
 import OverviewCards from './OverviewCards';
@@ -48,7 +57,7 @@ export default function Dashboard({ user, onLogoutSuccess }: DashboardProps) {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [onlineStatus, setOnlineStatus] = useState(navigator.onLine);
   const ALLOWED_TABS: Record<string, string[]> = {
-    ADMIN: ['dashboard', 'pos', 'inventario', 'compras', 'nomina', 'clientes', 'proveedores', 'cierre', 'analiticas', 'auditoria', 'settings'],
+    ADMIN: ['dashboard', 'pos', 'inventario', 'compras', 'nomina', 'clientes', 'proveedores', 'cierre', 'analiticas', 'auditoria', 'settings', 'users', 'profile'],
     AUDITOR: ['dashboard', 'inventario', 'clientes', 'proveedores', 'analiticas', 'auditoria'],
     CASHIER: ['pos', 'cierre']
   };
@@ -58,13 +67,14 @@ export default function Dashboard({ user, onLogoutSuccess }: DashboardProps) {
     return 'dashboard';
   };
 
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'pos' | 'inventario' | 'compras' | 'nomina' | 'clientes' | 'proveedores' | 'analiticas' | 'auditoria' | 'cierre' | 'settings'>(getDefaultTab() as any);
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'pos' | 'inventario' | 'compras' | 'nomina' | 'clientes' | 'proveedores' | 'analiticas' | 'auditoria' | 'cierre' | 'settings' | 'users' | 'about' | 'profile'>(getDefaultTab() as any);
+  const [licenseState, setLicenseState] = useState(getLicenseState());
   const [sidebarExpanded, setSidebarExpanded] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [isCalculatorOpen, setIsCalculatorOpen] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [isUpdaterOpen, setIsUpdaterOpen] = useState(false);
-  const [updateStatus, setUpdateStatus] = useState<UpdateState>('UPDATE_AVAILABLE'); // Simulate update is ready initially
+  const [updateStatus, setUpdateStatus] = useState<UpdateState>('IDLE');
   const prevSyncRef = useRef<SyncState | null>(null);
   const isManualSyncRef = useRef<boolean>(false);
 
@@ -89,10 +99,41 @@ export default function Dashboard({ user, onLogoutSuccess }: DashboardProps) {
   const isAdminOrAuditor = user.role === 'ADMIN' || user.role === 'AUDITOR';
   const isAdmin = user.role === 'ADMIN';
 
+  // Refresh license and demo status periodically to automatically lock if demo expires
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setLicenseState(getLicenseState());
+    }, 2000);
+
+    // Force check when tab becomes visible (prevents background tab from extending demo)
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        setLicenseState(getLicenseState());
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    // Sync license state across tabs via BroadcastChannel
+    let channel: BroadcastChannel | null = null;
+    try {
+      channel = new BroadcastChannel('stockmaster-license');
+      channel.onmessage = () => {
+        setLicenseState(getLicenseState());
+      };
+    } catch { /* BroadcastChannel not supported */ }
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      channel?.close();
+    };
+  }, []);
+
   // Safeguard: Redirect if trying to access unauthorized tabs
   useEffect(() => {
     const allowed = ALLOWED_TABS[user.role] || [];
-    if (!allowed.includes(activeTab)) {
+    const finalAllowed = [...allowed, 'about'];
+    if (!finalAllowed.includes(activeTab)) {
       addToast({
         type: 'error',
         title: 'Acceso Denegado',
@@ -161,12 +202,10 @@ export default function Dashboard({ user, onLogoutSuccess }: DashboardProps) {
 
     // Subscribe to reactive RxDB Sync Worker
     const unsubscribe = syncWorker.subscribe((state) => {
-      // Toast on sync completion or error
+      // Toast on sync completion (not error — inline banner handles errors)
       const prev = prevSyncRef.current;
       if (prev?.isSyncing && !state.isSyncing) {
-        if (state.error) {
-          addToast({ type: 'error', title: 'Error de sincronización', message: state.error });
-        } else if (isManualSyncRef.current) {
+        if (!state.error && isManualSyncRef.current) {
           addToast({ type: 'success', title: 'Sincronización completada', message: 'Base de datos actualizada correctamente.' });
         }
         isManualSyncRef.current = false;
@@ -195,18 +234,104 @@ export default function Dashboard({ user, onLogoutSuccess }: DashboardProps) {
     dashboard: 'Tablero',
     pos: 'Caja Registradora',
     inventario: 'Catalogo de Inventario',
-    compras: 'Compras y Reposición OCR',
+    compras: 'Compras y Reposición',
     nomina: 'Nómina fiscal',
     clientes: 'Gestión de Clientes',
     proveedores: 'Directorio de Proveedores',
     analiticas: 'Reportes y Analíticas',
     auditoria: 'Auditoría y Bitácora',
     cierre: 'Arqueo de Caja',
-    settings: 'Configuración Fiscal'
+    settings: 'Configuración Fiscal',
+    users: 'Gestión de Usuarios',
+    about: 'Acerca de',
+    profile: 'Mi Perfil y Bodega'
+  };
+
+  const getRequiredPlanForTab = (tab: string): 'basic' | 'pro' | 'premium' => {
+    if (['nomina', 'analiticas', 'auditoria', 'settings', 'users', 'profile'].includes(tab)) return 'premium';
+    if (['compras', 'clientes', 'proveedores'].includes(tab)) return 'pro';
+    return 'basic';
+  };
+
+  const isTabAllowedByPlan = (tab: string): boolean => {
+    if (tab === 'about') return true;
+    if (licenseState.demoActive) return true;
+    if (!licenseState.plan) return false;
+    return PLAN_LIMITS[licenseState.plan].allowedTabs.includes(tab);
+  };
+
+  const renderTabContent = () => {
+    if (!isTabAllowedByPlan(activeTab)) {
+      return (
+        <PlanLockScreen 
+          requiredPlan={getRequiredPlanForTab(activeTab)} 
+          sectionName={headerLabels[activeTab]} 
+          onGoToAbout={() => setActiveTab('about')} 
+        />
+      );
+    }
+
+    switch (activeTab) {
+      case 'pos':
+        return <VentasPOS user={user} searchTerm={searchTerm} />;
+      case 'inventario':
+        return <Inventario searchTerm={searchTerm} user={user} />;
+      case 'compras':
+        return <Compras user={user} searchTerm={searchTerm} />;
+      case 'nomina':
+        return <Nomina user={user} searchTerm={searchTerm} />;
+      case 'clientes':
+        return <Clientes user={user} searchTerm={searchTerm} />;
+      case 'proveedores':
+        return <Proveedores user={user} searchTerm={searchTerm} />;
+      case 'analiticas':
+        return <Analiticas user={user} />;
+      case 'auditoria':
+        return <Auditoria user={user} />;
+      case 'cierre':
+        return <CierreCaja user={user} />;
+      case 'settings':
+        return <BusinessSettings user={user} onOpenUpdater={() => setIsUpdaterOpen(true)} />;
+      case 'users':
+        return <UserAdmin user={user} />;
+      case 'about':
+        return <About user={user} onLicenseChanged={() => setLicenseState(getLicenseState())} />;
+      case 'profile':
+        return <UserProfile user={user} />;
+      default:
+        /* VISTA PRINCIPAL: RESUMEN DEL DASHBOARD */
+        return (
+          <div className="dashboard-grid animate-entrance">
+            {/* Main Left Widgets Section */}
+            <div className="left-panel">
+              <h1 className="welcome-section">
+                Hola, {user.name.split(' ')[0]}
+              </h1>
+              <OverviewCards totalRevenue={totalRevenue} salesCount={salesCount} productsCount={productsCount} setActiveTab={setActiveTab} />
+              <div className="middle-row">
+                <SalesChartCard isDarkMode={isDarkMode} />
+                <CalendarCard setActiveTab={setActiveTab} />
+              </div>
+              <div className="bottom-row">
+                <WeeklySalesCard />
+                <TopProductsCard />
+              </div>
+            </div>
+            <RightSidebar isDarkMode={isDarkMode} />
+          </div>
+        );
+    }
   };
 
   return (
     <div className="app-container animate-entrance">
+      {licenseState.isLocked && (
+        <SystemLockScreen 
+          onUnlockSuccess={() => setLicenseState(getLicenseState())} 
+          onLogout={onLogoutSuccess} 
+          isMobile={window.innerWidth <= 768} 
+        />
+      )}
       {/* Left Collapsible Navigation Sidebar (Dashboard Clone Style) */}
       <Sidebar 
         activeTab={activeTab} 
@@ -215,6 +340,7 @@ export default function Dashboard({ user, onLogoutSuccess }: DashboardProps) {
         setSidebarExpanded={setSidebarExpanded}
         user={user}
         onlineStatus={onlineStatus}
+        licenseState={licenseState}
       />
       
       {/* Scrollable Dashboard Body (Dashboard Clone Style) */}
@@ -290,62 +416,7 @@ export default function Dashboard({ user, onLogoutSuccess }: DashboardProps) {
                 <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-secondary)' }}>Cargando sección...</span>
               </div>
             }>
-              {activeTab === 'pos' ? (
-                <VentasPOS user={user} searchTerm={searchTerm} />
-              ) : activeTab === 'inventario' ? (
-                <Inventario searchTerm={searchTerm} user={user} />
-              ) : activeTab === 'compras' ? (
-                <Compras user={user} searchTerm={searchTerm} />
-              ) : activeTab === 'nomina' ? (
-                <Nomina user={user} searchTerm={searchTerm} />
-              ) : activeTab === 'clientes' ? (
-                <Clientes user={user} searchTerm={searchTerm} />
-              ) : activeTab === 'proveedores' ? (
-                <Proveedores user={user} searchTerm={searchTerm} />
-              ) : activeTab === 'analiticas' ? (
-                <Analiticas user={user} />
-              ) : activeTab === 'auditoria' ? (
-                <Auditoria user={user} />
-              ) : activeTab === 'cierre' ? (
-                <CierreCaja user={user} />
-              ) : activeTab === 'settings' ? (
-                <BusinessSettings user={user} onOpenUpdater={() => setIsUpdaterOpen(true)} />
-              ) : (
-                /* VISTA PRINCIPAL: RESUMEN DEL DASHBOARD (Dashboard Clone Style - 100% Identical to image) */
-                <div className="dashboard-grid animate-entrance">
-                  
-                  {/* Main Left Widgets Section */}
-                  <div className="left-panel">
-                    
-                    {/* Spanish Page Title aligned with dashboard-clone */}
-                    <h1 className="welcome-section">
-                      Hola, {user.name.split(' ')[0]}
-                    </h1>
-
-                    {/* B2: Alertas de Inventario Bajo removed */}
-
-                    {/* Notched connected overview widgets */}
-                    <OverviewCards totalRevenue={totalRevenue} salesCount={salesCount} productsCount={productsCount} setActiveTab={setActiveTab} />
-                    
-                    {/* Sales Line Graph and Calendar row */}
-                    <div className="middle-row">
-                      <SalesChartCard isDarkMode={isDarkMode} />
-                      <CalendarCard setActiveTab={setActiveTab} />
-                    </div>
-                    
-                    {/* Cylindrical capsules and Customer Invoices table row */}
-                    <div className="bottom-row">
-                      <WeeklySalesCard />
-                      <TopProductsCard />
-                    </div>
-                    
-                  </div>
-
-                  {/* Narrow Right Statistics Column */}
-                  <RightSidebar isDarkMode={isDarkMode} />
-
-                </div>
-              )}
+              {renderTabContent()}
             </Suspense>
           </ErrorBoundary>
         </div>
@@ -385,7 +456,13 @@ export default function Dashboard({ user, onLogoutSuccess }: DashboardProps) {
           alignItems: 'center',
           zIndex: 2000,
           padding: '20px'
-        }}>
+        }}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Confirmar cierre de sesión"
+          onKeyDown={(e) => { if (e.key === 'Escape') setShowLogoutConfirm(false); }}
+          tabIndex={-1}
+        >
           
           <div className="widget" style={{
             width: '100%',
@@ -437,6 +514,13 @@ export default function Dashboard({ user, onLogoutSuccess }: DashboardProps) {
         isOpen={isUpdaterOpen} 
         onClose={() => setIsUpdaterOpen(false)} 
         onCheckStatus={(status) => setUpdateStatus(status)}
+      />
+      <OnboardingTutorial 
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        productsCount={productsCount}
+        salesCount={salesCount}
+        user={user}
       />
     </div>
   );

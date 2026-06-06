@@ -45,8 +45,13 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
 
   const addToast = useCallback((toast: Omit<Toast, 'id'>) => {
     const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-    const newToast: Toast = { ...toast, id, duration: toast.duration ?? 4000 };
-    setToasts(prev => [...prev, newToast]);
+    const typeDurations: Record<ToastType, number> = { success: 3000, error: 7000, warning: 5000, info: 4000 };
+    const duration = toast.duration ?? typeDurations[toast.type] ?? 4000;
+    const newToast: Toast = { ...toast, id, duration };
+    setToasts(prev => {
+      const next = [...prev, newToast];
+      return next.length > 5 ? next.slice(next.length - 5) : next;
+    });
 
     // Auto-dismiss
     if (newToast.duration && newToast.duration > 0) {

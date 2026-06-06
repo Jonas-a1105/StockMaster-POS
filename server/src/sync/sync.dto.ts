@@ -92,3 +92,15 @@ export const SyncPullSchema = z.object({
   lastSyncedAt: z.string().datetime({ message: 'Se requiere una fecha ISO válida (lastSyncedAt).' }),
 });
 
+export const SyncExpenseSchema = z.object({
+  id: z.string().min(1),
+  description: z.string().min(1),
+  amount: z.number().positive(),
+  category: z.string().optional().default('General'),
+  date: z.string().datetime(),
+  pendingSync: z.boolean().optional().default(false),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+
+

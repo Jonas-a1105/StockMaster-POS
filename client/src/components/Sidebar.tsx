@@ -9,25 +9,30 @@ import {
   ChevronLeft, 
   Menu,
   Users,
+  Shield,
   Truck,
   Layers,
   MoreHorizontal,
   Wifi,
   WifiOff,
   Lock,
-  Settings
+  Settings,
+  HelpCircle,
+  UserCircle2
 } from 'lucide-react';
 import logoImg from '../assets/logo.png';
+import { PLAN_LIMITS } from '../utils/license';
 
 interface SidebarProps {
-  activeTab: 'dashboard' | 'pos' | 'inventario' | 'compras' | 'nomina' | 'clientes' | 'proveedores' | 'analiticas' | 'auditoria' | 'cierre' | 'settings';
-  setActiveTab: (tab: 'dashboard' | 'pos' | 'inventario' | 'compras' | 'nomina' | 'clientes' | 'proveedores' | 'analiticas' | 'auditoria' | 'cierre' | 'settings') => void;
+  activeTab: 'dashboard' | 'pos' | 'inventario' | 'compras' | 'nomina' | 'clientes' | 'proveedores' | 'analiticas' | 'auditoria' | 'cierre' | 'settings' | 'users' | 'about' | 'profile';
+  setActiveTab: (tab: 'dashboard' | 'pos' | 'inventario' | 'compras' | 'nomina' | 'clientes' | 'proveedores' | 'analiticas' | 'auditoria' | 'cierre' | 'settings' | 'users' | 'about' | 'profile') => void;
   sidebarExpanded: boolean;
   setSidebarExpanded: (expanded: boolean) => void;
   user: {
     role: string;
   };
   onlineStatus: boolean;
+  licenseState?: any;
 }
 
 export default function Sidebar({ 
@@ -36,11 +41,49 @@ export default function Sidebar({
   sidebarExpanded, 
   setSidebarExpanded,
   user,
-  onlineStatus
+  onlineStatus,
+  licenseState
 }: SidebarProps) {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+
+  const isTabAllowedByPlan = (tabId: string): boolean => {
+    if (tabId === 'about') return true;
+    if (!licenseState) return true;
+    if (licenseState.demoActive) return true;
+    if (!licenseState.plan) return false;
+    const limits = PLAN_LIMITS[licenseState.plan as keyof typeof PLAN_LIMITS];
+    if (!limits) return false;
+    return limits.allowedTabs.includes(tabId);
+  };
+
+  const renderNavIcon = (Icon: any, id: string) => {
+    const isAllowed = isTabAllowedByPlan(id);
+    return (
+      <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+        <Icon size={20} />
+        {!isAllowed && (
+          <div style={{
+            position: 'absolute',
+            bottom: '-4px',
+            right: '-4px',
+            backgroundColor: '#ef4444',
+            borderRadius: '50%',
+            width: '12px',
+            height: '12px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            border: '1.5px solid var(--bg-card)',
+            boxShadow: '0 2px 4px rgba(0,0,0,0.3)'
+          }}>
+            <Lock size={7} style={{ color: '#fff' }} />
+          </div>
+        )}
+      </div>
+    );
+  };
   const ALLOWED_TABS: Record<string, string[]> = {
-    ADMIN: ['dashboard', 'pos', 'inventario', 'compras', 'nomina', 'clientes', 'proveedores', 'cierre', 'analiticas', 'auditoria', 'settings'],
+    ADMIN: ['dashboard', 'pos', 'inventario', 'compras', 'nomina', 'clientes', 'proveedores', 'cierre', 'analiticas', 'auditoria', 'settings', 'users', 'profile'],
     AUDITOR: ['dashboard', 'inventario', 'clientes', 'proveedores', 'analiticas', 'auditoria'],
     CASHIER: ['pos', 'cierre']
   };
@@ -53,24 +96,58 @@ export default function Sidebar({
 
   // Navigation tabs adapted to StockMasterPro with keyboard shortcut hints (D3)
   const shortcutMap: Record<string, string> = {
-    'dashboard': 'F5',
-    'pos': 'F3',
-    'inventario': 'F4',
+    'dashboard': 'Alt+1',
+    'pos': 'Alt+2',
+    'inventario': 'Alt+3',
+    'compras': 'Alt+4',
+    'nomina': 'Alt+5',
+    'clientes': 'Alt+6',
+    'proveedores': 'Alt+7',
+    'cierre': 'Alt+8',
+    'analiticas': 'Alt+9',
+    'auditoria': 'Alt+0',
+    'users': 'Alt+U',
+    'settings': 'Alt+S',
+    'about': 'Alt+A',
+    'profile': 'Alt+P',
   };
+
+  // Global keyboard shortcuts for navigation (Alt+1..9, etc.)
+  useState(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (!e.altKey) return;
+      const map: Record<string, string> = {
+        '1': 'dashboard', '2': 'pos', '3': 'inventario', '4': 'compras',
+        '5': 'nomina', '6': 'clientes', '7': 'proveedores', '8': 'cierre',
+        '9': 'analiticas', '0': 'auditoria',
+        'u': 'users', 's': 'settings', 'a': 'about', 'p': 'profile',
+      };
+      const tab = map[e.key.toLowerCase()];
+      if (tab && roleAllowedTabs.includes(tab)) {
+        e.preventDefault();
+        setActiveTab(tab as any);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  });
 
   const navItems = [
     { id: 'dashboard' as const, icon: LayoutDashboard, label: 'Resumen' },
     { id: 'pos' as const, icon: ShoppingCart, label: 'Ventas POS' },
     { id: 'inventario' as const, icon: Package, label: 'Inventario' },
-    { id: 'compras' as const, icon: Layers, label: 'Compras y OCR' },
+    { id: 'compras' as const, icon: Layers, label: 'Compras' },
     { id: 'nomina' as const, icon: FileText, label: 'Nómina fiscal' },
     { id: 'clientes' as const, icon: Users, label: 'Clientes' },
     { id: 'proveedores' as const, icon: Truck, label: 'Proveedores' },
     { id: 'cierre' as const, icon: Lock, label: 'Arqueo de Caja' },
     { id: 'analiticas' as const, icon: BarChart3, label: 'Reportes' },
     { id: 'auditoria' as const, icon: ShieldAlert, label: 'Auditoría' },
-    { id: 'settings' as const, icon: Settings, label: 'Configuración' }
-  ].filter(item => roleAllowedTabs.includes(item.id));
+    { id: 'users' as const, icon: Shield, label: 'Usuarios' },
+    { id: 'settings' as const, icon: Settings, label: 'Configuración' },
+    { id: 'profile' as const, icon: UserCircle2, label: 'Mi Perfil' },
+    { id: 'about' as const, icon: HelpCircle, label: 'Acerca de' }
+  ].filter(item => roleAllowedTabs.includes(item.id) || item.id === 'about');
 
   // Partition navigation dynamically for mobile bottom bar
   const showMoreButton = navItems.length > 5;
@@ -111,22 +188,29 @@ export default function Sidebar({
             </button>
           </div>
           
-          <nav className="nav-links">
+          <nav className="nav-links" aria-label="Navegación principal">
             {navItems.map((item) => {
               const Icon = item.icon;
               const isActive = activeTab === item.id;
               const shortcutKey = shortcutMap[item.id];
+              const isAllowed = isTabAllowedByPlan(item.id);
               
               return (
                 <div 
                   key={item.id} 
+                  data-tour={`sidebar-${item.id}`}
                   className={`nav-item ${isActive ? 'active' : ''}`} 
-                  title={shortcutKey ? `${item.label} [${shortcutKey}]` : item.label}
+                  title={`${item.label} ${isAllowed ? '' : '(Restringido) '} [${shortcutKey}]`}
                   onClick={() => setActiveTab(item.id)}
+                  role="button"
+                  tabIndex={0}
+                  style={{ opacity: isAllowed ? 1 : 0.45 }}
+                  aria-current={isActive ? 'page' : undefined}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setActiveTab(item.id); } }}
                 >
-                  <Icon size={20} />
+                  {renderNavIcon(Icon, item.id)}
                   <span className="nav-item-label">{item.label}</span>
-                  {shortcutKey && sidebarExpanded && (
+                  {shortcutKey && (
                     <span style={{
                       marginLeft: 'auto',
                       fontSize: '9px',
@@ -138,7 +222,8 @@ export default function Sidebar({
                       color: isActive ? '#fff' : 'var(--brand-primary)',
                       border: `1px solid ${isActive ? 'rgba(255,255,255,0.2)' : 'rgba(14, 165, 164, 0.15)'}`,
                       lineHeight: '1',
-                      flexShrink: 0
+                      flexShrink: 0,
+                      display: sidebarExpanded ? 'inline' : 'none'
                     }}>
                       {shortcutKey}
                     </span>
@@ -170,17 +255,20 @@ export default function Sidebar({
         {primaryItems.map((item) => {
           const Icon = item.icon;
           const isActive = activeTab === item.id;
+          const isAllowed = isTabAllowedByPlan(item.id);
           return (
             <button
               key={item.id}
+              data-tour={`sidebar-${item.id}`}
               className={`mobile-nav-btn ${isActive ? 'active' : ''}`}
               onClick={() => {
                 setActiveTab(item.id);
                 setIsDrawerOpen(false);
               }}
+              style={{ opacity: isAllowed ? 1 : 0.45 }}
               title={item.label}
             >
-              <Icon size={20} />
+              {renderNavIcon(Icon, item.id)}
               <span className="mobile-nav-label">{item.label.split(' ')[0]}</span>
             </button>
           );
@@ -214,17 +302,20 @@ export default function Sidebar({
           {drawerItems.map((item) => {
             const Icon = item.icon;
             const isActive = activeTab === item.id;
+            const isAllowed = isTabAllowedByPlan(item.id);
             return (
               <div
                 key={item.id}
+                data-tour={`sidebar-${item.id}`}
                 className={`drawer-item ${isActive ? 'active' : ''}`}
+                style={{ opacity: isAllowed ? 1 : 0.45 }}
                 onClick={() => {
                   setActiveTab(item.id);
                   setIsDrawerOpen(false);
                 }}
               >
                 <div className="drawer-item-icon">
-                  <Icon size={20} />
+                  {renderNavIcon(Icon, item.id)}
                 </div>
                 <span className="drawer-item-label">{item.label}</span>
               </div>

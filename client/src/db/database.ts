@@ -1,13 +1,17 @@
 import { createRxDatabase, addRxPlugin, type RxDatabase, type RxCollection } from 'rxdb';
 import { getRxStorageDexie } from 'rxdb/plugins/storage-dexie';
 import { RxDBQueryBuilderPlugin } from 'rxdb/plugins/query-builder';
+import { RxDBMigrationSchemaPlugin } from 'rxdb/plugins/migration-schema';
+import { wrappedValidateAjvStorage } from 'rxdb/plugins/validate-ajv';
 
 // Habilita el plugin de construcción de consultas reactivas en RxDB
 addRxPlugin(RxDBQueryBuilderPlugin);
+// Habilita el plugin de migración de esquemas en RxDB
+addRxPlugin(RxDBMigrationSchemaPlugin);
 
-// Habilita dev-mode en desarrollo para validación de esquemas RxDB
+let devModePromise: Promise<void> | null = null;
 if (import.meta.env.DEV) {
-  import('rxdb/plugins/dev-mode').then(({ RxDBDevModePlugin }) => {
+  devModePromise = import('rxdb/plugins/dev-mode').then(({ RxDBDevModePlugin }) => {
     addRxPlugin(RxDBDevModePlugin);
   });
 }
@@ -15,7 +19,7 @@ if (import.meta.env.DEV) {
 // 1. Esquema JSON de Usuarios (Caché local seguro para login offline)
 const userSchema = {
   title: 'user schema',
-  version: 0,
+  version: 1,
   primaryKey: 'id',
   type: 'object',
   properties: {
@@ -27,6 +31,8 @@ const userSchema = {
     pinHash: { type: 'string' },      // Hash encriptado del PIN rápido
     baseSalary: { type: 'number' },   // Salario base por defecto ($)
     commissionRate: { type: 'number' }, // Tasa de comisión sobre ventas (ej: 0.05 para 5%)
+    warehouseName: { type: 'string' },  // Nombre de la bodega/sucursal del usuario
+    warehouseConfig: { type: 'string' }, // JSON serializado con configuración del catálogo de bodega
     updatedAt: { type: 'string' }
   },
   required: ['id', 'email', 'name', 'role', 'passwordHash', 'updatedAt']
@@ -35,7 +41,7 @@ const userSchema = {
 // 2. Esquema JSON de Productos (Coincide con el modelo relacional del servidor)
 const productSchema = {
   title: 'product schema',
-  version: 0,
+  version: 1,
   primaryKey: 'id',
   type: 'object',
   properties: {
@@ -44,12 +50,13 @@ const productSchema = {
     name: { type: 'string' },
     category: { type: 'string' },
     price: { type: 'number' },
-    wholesalePrice: { type: 'number' }, // Precio de venta al mayor ($)
+    wholesalePrice: { type: 'number' },
     cost: { type: 'number' },
     stock: { type: 'number' },
     minStock: { type: 'number' },
     batches: { type: 'string' },
     version: { type: 'integer' },
+    deletedAt: { type: 'string' },
     updatedAt: { type: 'string' }
   },
   required: ['id', 'code', 'name', 'price', 'stock', 'updatedAt']
@@ -219,7 +226,7 @@ const attendanceSchema = {
 // 9. Esquema JSON de Auditoría local
 const auditLogSchema = {
   title: 'audit log schema',
-  version: 0,
+  version: 1,
   primaryKey: 'id',
   type: 'object',
   properties: {
@@ -227,9 +234,29 @@ const auditLogSchema = {
     userId: { type: 'string' },
     action: { type: 'string' },
     details: { type: 'string' },
+    severity: { type: 'string' },
     createdAt: { type: 'string' }
   },
   required: ['id', 'action', 'createdAt']
+};
+
+// 10. Esquema JSON de Gastos Operativos Generales
+const expenseSchema = {
+  title: 'expense schema',
+  version: 0,
+  primaryKey: 'id',
+  type: 'object',
+  properties: {
+    id: { type: 'string', maxLength: 100 },
+    description: { type: 'string' },
+    amount: { type: 'number' },
+    category: { type: 'string' },
+    date: { type: 'string' },
+    pendingSync: { type: 'boolean' },
+    createdAt: { type: 'string' },
+    updatedAt: { type: 'string' }
+  },
+  required: ['id', 'description', 'amount', 'date', 'pendingSync', 'createdAt', 'updatedAt']
 };
 
 // Definición de tipos para las colecciones RxDB
@@ -242,6 +269,8 @@ export type UserDocType = {
   pinHash?: string;
   baseSalary?: number;
   commissionRate?: number;
+  warehouseName?: string;
+  warehouseConfig?: string;
   updatedAt: string;
 };
 
@@ -257,6 +286,7 @@ export type ProductDocType = {
   minStock: number;
   batches?: string;
   version: number;
+  deletedAt?: string;
   updatedAt: string;
 };
 
@@ -356,7 +386,19 @@ export type AuditLogDocType = {
   userId?: string;
   action: string;
   details?: string;
+  severity?: string;
   createdAt: string;
+};
+
+export type ExpenseDocType = {
+  id: string;
+  description: string;
+  amount: number;
+  category?: string;
+  date: string;
+  pendingSync: boolean;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type StockMasterCollections = {
@@ -369,6 +411,7 @@ export type StockMasterCollections = {
   payroll: RxCollection<PayrollDocType>;
   attendance: RxCollection<AttendanceDocType>;
   auditLogs: RxCollection<AuditLogDocType>;
+  expenses: RxCollection<ExpenseDocType>;
 };
 
 export type StockMasterDatabase = RxDatabase<StockMasterCollections>;
@@ -376,7 +419,10 @@ export type StockMasterDatabase = RxDatabase<StockMasterCollections>;
 let dbPromise: Promise<StockMasterDatabase> | null = null;
 
 // Inicializador único de la base de datos IndexedDB local
-export function getDatabase(): Promise<StockMasterDatabase> {
+export async function getDatabase(): Promise<StockMasterDatabase> {
+  if (devModePromise) {
+    await devModePromise;
+  }
   if (!dbPromise) {
     const currentDbName = 'stockmaster_local_db_v7';
     const savedDbName = localStorage.getItem('active_rxdb_name');
@@ -385,25 +431,59 @@ export function getDatabase(): Promise<StockMasterDatabase> {
       localStorage.setItem('active_rxdb_name', currentDbName);
     }
 
+    const dexieStorage = getRxStorageDexie();
+    const storage = import.meta.env.DEV
+      ? wrappedValidateAjvStorage({ storage: dexieStorage })
+      : dexieStorage;
+
     dbPromise = createRxDatabase<StockMasterCollections>({
       name: currentDbName,
-      storage: getRxStorageDexie(),
+      storage,
       multiInstance: true,
-      eventReduce: true
+      eventReduce: true,
+      ...(import.meta.env.DEV && { ignoreDuplicate: true })
     }).then(async (db) => {
       console.log('✅ Base de datos RxDB local (IndexedDB) inicializada con éxito.');
       
       // Agrega las colecciones del sistema POS offline
       await db.addCollections({
-        users: { schema: userSchema },
-        products: { schema: productSchema },
+        users: { 
+          schema: userSchema,
+          migrationStrategies: {
+            // Migración desde versión 0 a versión 1: Añadir propiedades de bodega del usuario
+            1: (oldDoc: any) => {
+              oldDoc.warehouseName = oldDoc.warehouseName ?? '';
+              oldDoc.warehouseConfig = oldDoc.warehouseConfig ?? '';
+              return oldDoc;
+            }
+          }
+        },
+        products: { 
+          schema: productSchema,
+          migrationStrategies: {
+            1: (oldDoc: any) => {
+              oldDoc.deletedAt = null;
+              return oldDoc;
+            }
+          }
+        },
         sales: { schema: saleSchema },
         clients: { schema: clientSchema },
         suppliers: { schema: supplierSchema },
         purchases: { schema: purchaseSchema },
         payroll: { schema: payrollSchema },
         attendance: { schema: attendanceSchema },
-        auditLogs: { schema: auditLogSchema }
+        auditLogs: { 
+          schema: auditLogSchema,
+          migrationStrategies: {
+            // Migración desde versión 0 a versión 1: Añadir propiedad severity por defecto
+            1: (oldDoc: any) => {
+              oldDoc.severity = 'info';
+              return oldDoc;
+            }
+          }
+        },
+        expenses: { schema: expenseSchema }
       });
 
       const { migrateLocalStorageToRxDB } = await import('./migration');
@@ -413,4 +493,27 @@ export function getDatabase(): Promise<StockMasterDatabase> {
     });
   }
   return dbPromise;
+}
+
+export async function purgeDatabase(): Promise<void> {
+  if (dbPromise) {
+    const db = await dbPromise;
+    dbPromise = null;
+    try {
+      await db.remove();
+      console.log('🗑️ Base de datos RxDB local eliminada con éxito.');
+    } catch (e) {
+      console.error('Error al remover la base de datos RxDB:', e);
+    }
+  } else {
+    const currentDbName = 'stockmaster_local_db_v7';
+    const { removeRxDatabase } = await import('rxdb');
+    try {
+      await removeRxDatabase(currentDbName, getRxStorageDexie());
+      console.log('🗑️ Base de datos RxDB local eliminada por nombre con éxito.');
+    } catch (e) {
+      console.error('Error al remover la base de datos por nombre:', e);
+    }
+  }
+  localStorage.removeItem('last_synced_at');
 }

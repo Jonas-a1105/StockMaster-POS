@@ -8,6 +8,8 @@ interface KeyboardShortcutsProps {
   onToggleTheme: () => void;
   onFocusSearch: () => void;
   role: string;
+  isOpen?: boolean;
+  onClose?: () => void;
 }
 
 interface Shortcut {
@@ -25,11 +27,25 @@ export default function KeyboardShortcuts({
   onToggleTheme,
   onFocusSearch,
   role,
+  isOpen,
+  onClose,
 }: KeyboardShortcutsProps) {
   const [showHelp, setShowHelp] = useState(false);
 
+  useEffect(() => {
+    if (isOpen !== undefined) {
+      setShowHelp(isOpen);
+    }
+  }, [isOpen]);
+
+  const handleClose = () => {
+    setShowHelp(false);
+    if (onClose) onClose();
+  };
+
+
   const ALLOWED_TABS: Record<string, string[]> = {
-    ADMIN: ['dashboard', 'pos', 'inventario', 'compras', 'nomina', 'clientes', 'proveedores', 'cierre', 'analiticas', 'auditoria', 'settings'],
+    ADMIN: ['dashboard', 'pos', 'inventario', 'compras', 'nomina', 'clientes', 'proveedores', 'cierre', 'analiticas', 'auditoria', 'settings', 'users'],
     AUDITOR: ['dashboard', 'inventario', 'clientes', 'proveedores', 'analiticas', 'auditoria'],
     CASHIER: ['pos', 'cierre']
   };
@@ -69,7 +85,7 @@ export default function KeyboardShortcuts({
 
       // Escape closes help
       if (e.key === 'Escape' && showHelp) {
-        setShowHelp(false);
+        handleClose();
         return;
       }
 
@@ -98,7 +114,7 @@ export default function KeyboardShortcuts({
           backdropFilter: 'blur(6px)',
           zIndex: 1799,
         }}
-        onClick={() => setShowHelp(false)}
+        onClick={handleClose}
       />
 
       {/* Shortcuts Panel */}
@@ -118,7 +134,7 @@ export default function KeyboardShortcuts({
             </h2>
           </div>
           <button
-            onClick={() => setShowHelp(false)}
+            onClick={handleClose}
             className="theme-toggle-btn"
             style={{ width: '32px', height: '32px', borderRadius: '50%' }}
           >

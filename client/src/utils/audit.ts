@@ -20,7 +20,8 @@ import { getDatabase } from '../db/database';
 export async function logAuditEvent(
   user: { name: string; email?: string; role: string } | null,
   action: string,
-  details: any
+  details: any,
+  severity?: 'INFO' | 'WARNING' | 'CRITICAL'
 ) {
   try {
     const activeUser = user || { name: 'Sistema', email: 'sistema@stockmaster.pro', role: 'SYSTEM' };
@@ -28,14 +29,24 @@ export async function logAuditEvent(
     const detailsStr = typeof details === 'string' ? details : JSON.stringify(details, null, 2);
     const createdAt = new Date().toISOString();
     const db = await getDatabase();
+
+    const deducedSeverity = severity || (
+      action.endsWith('_ELIMINAR') || action.includes('ELIMINAR') || action.includes('BORRAR') || action.includes('SOBREESCRITURA')
+        ? 'CRITICAL'
+        : (action.includes('_EDITAR') || action.includes('EDITAR') || action.includes('MODIFICAR') || action.includes('CONFLICT') || action.includes('CIERRE') || action.includes('AJUSTE'))
+          ? 'WARNING'
+          : 'INFO'
+    );
+
     await db.auditLogs.insert({
       id,
       userId: activeUser.email || 'sistema@stockmaster.pro',
       action,
       details: detailsStr,
+      severity: deducedSeverity,
       createdAt
     });
-    console.log(`[Audit RxDB] Event logged: ${action}`);
+    console.log(`[Audit RxDB] Event logged: ${action} (${deducedSeverity})`);
   } catch (error) {
     console.error('Failed to save local audit log to RxDB:', error);
   }

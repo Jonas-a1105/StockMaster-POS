@@ -83,13 +83,30 @@ body {
   font-family: var(--font-main);
   font-size: 14px;
   overflow-x: hidden; /* Prevent all horizontal scrolls! */
-  overflow-y: hidden; /* Managed in main-content for desktop */
   height: 100vh;
   width: 100%;
   max-width: 100%;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* Restore body scrolling on desktop so content can scroll */
+@media (min-width: 769px) {
+  body {
+    overflow-y: auto;
+  }
+}
+
+/* Focus-visible ring for keyboard navigation */
+:focus-visible {
+  outline: 2px solid var(--brand-primary);
+  outline-offset: 2px;
+}
+
+/* Remove focus ring for mouse clicks while keeping keyboard visible */
+:focus:not(:focus-visible) {
+  outline: none;
 }
 
 /* App Layout Shell */
@@ -247,7 +264,7 @@ body {
   top: 15%;
   height: 70%;
   width: 4px;
-  background-color: #e587ff;
+  background-color: var(--brand-primary);
   border-radius: 0 4px 4px 0;
 }
 
@@ -793,7 +810,6 @@ body {
   color: var(--text-primary);
   position: relative;
   z-index: 2;
-  cursor: pointer;
   border-radius: 50%;
   transition: all 0.2s ease;
 }
@@ -1451,7 +1467,7 @@ select.dropdown-select {
     transition: background-color 0.3s ease, border-color 0.3s ease;
   }
   
-  .search-container {
+  .search-container:not(.desktop-search-container) {
     order: unset !important;
     flex-grow: 1 !important; /* Dynamically spans the middle space uniformly */
     max-width: 160px !important;
@@ -1677,6 +1693,17 @@ select.dropdown-select {
 @keyframes customizerFadeIn {
   from { opacity: 0; }
   to { opacity: 1; }
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 /* ── Drawer Panel ─────────────────────────────────── */
@@ -3001,8 +3028,12 @@ body.glass-noise-enabled .widget::after {
     display: none !important;
   }
 
-  .dashboard-header .search-container {
+  .dashboard-header .search-container.desktop-search-container {
     display: none !important;
+  }
+
+  .dashboard-header .search-container.desktop-search-container .search-input {
+    font-size: 14px !important;
   }
 
   .dashboard-header .script-title {
@@ -3367,7 +3398,7 @@ body.glass-noise-enabled .widget::after {
   }
 
   /* 11. SEARCH CONTAINERS */
-  .search-container {
+  .search-container:not(.desktop-search-container) {
     min-width: unset !important;
     width: 100% !important;
     max-width: 100% !important;
@@ -4603,12 +4634,39 @@ select option {
   left: 0;
   right: 0;
   min-width: 100%;
-  max-height: 160px;
+  max-height: 180px;
   overflow-y: auto;
   z-index: 1600 !important;
   display: flex;
   flex-direction: column;
   gap: 2px;
+  animation: customSelectFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes customSelectFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Custom scrollbars inside custom select options list */
+.custom-select-options-list::-webkit-scrollbar {
+  width: 5px;
+}
+.custom-select-options-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-select-options-list::-webkit-scrollbar-thumb {
+  background-color: var(--border-color);
+  border-radius: 4px;
+}
+.custom-select-options-list::-webkit-scrollbar-thumb:hover {
+  background-color: var(--brand-primary);
 }
 
 /* Specific styling for options popup when glassmorphism/solid/bordered are applied to select */
@@ -4643,7 +4701,7 @@ body.popup-bordered .custom-select-options-list {
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   white-space: nowrap;
 }
 
@@ -4651,6 +4709,7 @@ body.popup-bordered .custom-select-options-list {
 .custom-select-option.active {
   background-color: var(--bg-input, #1c1c22);
   color: var(--brand-primary, #0ea5a4);
+  padding-left: 16px;
 }
 
 .custom-select-option.selected {
@@ -5214,7 +5273,301 @@ body.pill-anim-bounce .view-header-pill:hover {
   cursor: default;
 }
 
+/* ==========================================================
+   MOBILE SEARCH MODAL OVERLAY & TRIGGER
+   ========================================================== */
+.mobile-search-trigger {
+  display: none !important;
+}
 
+@media (max-width: 768px) {
+  .desktop-search-container {
+    display: none !important;
+  }
+  
+  .mobile-search-trigger {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+  }
 
+  .mobile-search-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(6, 6, 8, 0.9) !important;
+    backdrop-filter: blur(20px) !important;
+    -webkit-backdrop-filter: blur(20px) !important;
+    z-index: 3000 !important; /* Extremely high to cover bottom bar and headers */
+    display: flex;
+    flex-direction: column;
+    animation: fadeInMobileSearch 0.25s ease-out forwards;
+  }
 
+  .mobile-search-modal-content {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    width: 100%;
+    padding: 20px 16px;
+    box-sizing: border-box;
+  }
+
+  .mobile-search-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 20px;
+    width: 100%;
+  }
+
+  .mobile-search-input-wrapper {
+    position: relative;
+    flex: 1;
+  }
+
+  .mobile-search-icon {
+    position: absolute;
+    left: 14px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--text-muted) !important;
+  }
+
+  .mobile-search-input {
+    width: 100% !important;
+    height: 46px !important;
+    padding: 8px 12px 8px 42px !important;
+    border-radius: 12px !important;
+    border: 1.5px solid var(--border-color) !important;
+    background-color: var(--bg-input) !important;
+    color: var(--text-primary) !important;
+    font-size: 15px !important;
+    font-weight: 600 !important;
+    outline: none !important;
+    box-sizing: border-box !important;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  .mobile-search-input:focus {
+    border-color: var(--brand-teal) !important;
+    box-shadow: 0 0 10px rgba(14, 165, 164, 0.25) !important;
+  }
+
+  .mobile-search-close-btn {
+    background: transparent !important;
+    border: none !important;
+    color: var(--text-secondary) !important;
+    font-size: 14px !important;
+    font-weight: 800 !important;
+    cursor: pointer !important;
+    padding: 8px 4px !important;
+    white-space: nowrap;
+    transition: color 0.2s ease;
+  }
+
+  .mobile-search-close-btn:active {
+    color: var(--text-primary) !important;
+  }
+
+  .mobile-search-results {
+    flex: 1;
+    overflow-y: auto;
+    padding-bottom: 80px; /* Offset bottom space */
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    width: 100%;
+  }
+
+  .mobile-search-empty-state {
+    padding: 60px 20px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .mobile-search-result-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 14px 16px !important;
+    border-radius: 14px !important;
+    background-color: rgba(255, 255, 255, 0.02) !important;
+    border: 1px solid var(--border-color) !important;
+    cursor: pointer !important;
+    transition: transform 0.15s ease, background-color 0.15s ease;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .mobile-search-result-row:active {
+    transform: scale(0.98);
+    background-color: rgba(255, 255, 255, 0.05) !important;
+  }
+
+  .mobile-search-result-row .result-name {
+    font-weight: 750 !important;
+    color: var(--text-primary) !important;
+    font-size: 14px !important;
+  }
+
+  .mobile-search-result-row .result-details {
+    font-size: 11px !important;
+    color: var(--text-muted) !important;
+    margin-top: 2px;
+  }
+
+  .result-badge {
+    font-size: 9px !important;
+    font-weight: 800 !important;
+    text-transform: uppercase !important;
+    padding: 4px 10px !important;
+    border-radius: 50px !important;
+    letter-spacing: 0.3px;
+  }
+
+  .result-badge.badge-producto {
+    background-color: rgba(14, 165, 164, 0.12) !important;
+    color: var(--brand-teal) !important;
+  }
+
+  .result-badge.badge-cliente {
+    background-color: rgba(59, 130, 246, 0.12) !important;
+    color: #3b82f6 !important;
+  }
+
+  .result-badge.badge-proveedor {
+    background-color: rgba(168, 85, 247, 0.12) !important;
+    color: #a855f7 !important;
+  }
+
+  .result-badge.badge-nomina {
+    background-color: rgba(245, 158, 11, 0.12) !important;
+    color: #f59e0b !important;
+  }
+}
+
+@keyframes fadeInMobileSearch {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes statusPulse {
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7);
+  }
+  70% {
+    transform: scale(1);
+    box-shadow: 0 0 0 8px rgba(34, 197, 94, 0);
+  }
+  100% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0);
+  }
+}
+
+.status-pulse-dot {
+  width: 8px;
+  height: 8px;
+  background-color: #22c55e;
+  border-radius: 50%;
+  display: inline-block;
+  animation: statusPulse 2s infinite;
+}
+
+.custom-range-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  border-radius: 5px;
+  background: var(--border-color);
+  outline: none;
+  transition: background 0.3s;
+}
+
+.custom-range-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--brand-primary);
+  cursor: pointer;
+  transition: transform 0.1s ease, background-color 0.2s;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+
+.custom-range-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.25);
+}
+
+.custom-range-slider::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--brand-primary);
+  cursor: pointer;
+  transition: transform 0.1s ease, background-color 0.2s;
+  border: none;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+
+.custom-range-slider::-moz-range-thumb:hover {
+  transform: scale(1.25);
+}
+
+/* Escáner Láser Animación */
+@keyframes laserSweep {
+  0% {
+    top: 0%;
+    opacity: 0.4;
+  }
+  50% {
+    top: 100%;
+    opacity: 1;
+  }
+  100% {
+    top: 0%;
+    opacity: 0.4;
+  }
+}
+
+.laser-line {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  height: 3px;
+  background-color: #ef4444;
+  box-shadow: 0 0 10px #ef4444, 0 0 20px #ef4444;
+  z-index: 10;
+  animation: laserSweep 2s infinite linear;
+}
+
+/* Papel térmico con bordes dentados */
+.receipt-paper {
+  background-color: #fcfcfc;
+  color: #111827;
+  font-family: 'Courier New', Courier, monospace;
+  padding: 24px 18px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.15);
+  position: relative;
+  border-bottom: 5px dashed #d1d5db;
+}
+
+/* Efecto de parpadeo offline */
+@keyframes offlineBlink {
+  0% { opacity: 0.6; }
+  50% { opacity: 1; }
+  100% { opacity: 0.6; }
+}
+
+.offline-alert-pulse {
+  animation: offlineBlink 1.5s infinite;
+}
 

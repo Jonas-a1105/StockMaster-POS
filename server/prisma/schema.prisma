@@ -16,8 +16,11 @@ model User {
   name      String
   role      String    @default("CASHIER") // ADMIN, CASHIER, AUDITOR
   pin       String?   // Hash del PIN de 4-6 dígitos para inicio de sesión offline
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  disabled          Boolean   @default(false) // Cuenta desactivada por admin
+  verifiedAt        DateTime? // Fecha de verificación de email (null = no verificado)
+  verificationToken String?   // Token único para verificación de email
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
   // Relaciones
   sales         Sale[]
@@ -28,24 +31,26 @@ model User {
 
 // 2. Inventario y Productos
 model Product {
-  id          String   @id @default(uuid())
-  code        String   @unique // Código de barras para lector POS
+  id          String    @id @default(uuid())
+  code        String    @unique // Código de barras para lector POS
   name        String
   category    String
-  price       Float    // Precio de venta
-  cost        Float    // Costo de compra
-  stock       Float    @default(0)
-  minStock    Float    @default(5) // Alerta de reposición
-  batches     String?  // Lotes serializados en JSON
-  version     Int      @default(1) // Control de concurrencia y replicación RxDB
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  price       Float     // Precio de venta
+  cost        Float     // Costo de compra
+  stock       Float     @default(0)
+  minStock    Float     @default(5) // Alerta de reposición
+  batches     String?   // Lotes serializados en JSON
+  version     Int       @default(1) // Control de concurrencia y replicación RxDB
+  deletedAt   DateTime? // Soft-delete para sincronización de eliminaciones
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   // Relaciones
   saleItems     SaleItem[]
   purchaseItems PurchaseItem[]
 
   @@index([category])
+  @@index([deletedAt])
 }
 
 // 3. Proveedores
@@ -192,6 +197,7 @@ model AuditLog {
   ipAddress String
   userAgent String
   createdAt DateTime @default(now())
+  severity  String   @default("INFO") // INFO, WARNING, CRITICAL
 
   // Relaciones
   user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
@@ -199,4 +205,51 @@ model AuditLog {
   @@index([userId])
   @@index([action])
   @@index([createdAt])
+  @@index([severity])
 }
+
+// 10. Gastos Operativos Generales (Servicios, Alquiler, Impuestos, etc.)
+model Expense {
+  id          String   @id @default(uuid())
+  description String
+  amount      Float
+  category    String   @default("General") // Ej: Servicios, Alquiler, Impuestos, Marketing, etc.
+  date        DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([date])
+  @@index([createdAt])
+}
+
+// 11. Blacklist de tokens JWT revocados (logout, rotación, robo)
+//    Reemplaza el Set en memoria. Limpieza periódica por job o por expiresAt.
+model TokenBlacklist {
+  id        String   @id @default(uuid())
+  tokenHash String   @unique // SHA-256 del token; nunca guardar el token plano
+  userId    String?
+  reason    String   @default("LOGOUT")
+  expiresAt DateTime // Cuando se puede limpiar de la tabla
+  createdAt DateTime @default(now())
+
+  @@index([expiresAt])
+  @@index([userId])
+}
+
+// 12. Intentos de login fallidos / lockouts (rate-limit + seguridad)
+//    Reemplaza el Map<string, LockoutInfo> en memoria.
+model LoginAttempt {
+  id             String   @id @default(uuid())
+  email          String
+  ipAddress      String
+  userAgent      String
+  success        Boolean  @default(false)
+  failureCount   Int      @default(0)
+  lockoutUntil   DateTime?
+  createdAt      DateTime @default(now())
+
+  @@index([email])
+  @@index([ipAddress])
+  @@index([createdAt])
+}
+

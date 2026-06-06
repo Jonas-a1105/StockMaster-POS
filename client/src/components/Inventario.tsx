@@ -1,12 +1,14 @@
 import { useState, useEffect } from 'react';
-import { Search, Plus, Sparkles, Check, X, AlertTriangle, AlertCircle, Edit, Trash2, ShoppingBag, RefreshCw, Info, History, TrendingUp } from 'lucide-react';
+import { Search, Plus, Sparkles, Check, X, AlertTriangle, AlertCircle, Edit, Trash2, ShoppingBag, RefreshCw, Info, History, TrendingUp, FileSpreadsheet } from 'lucide-react';
 import { getDatabase, type ProductDocType } from '../db/database';
 import { syncWorker } from '../db/sync';
 import { useExchangeRate } from '../contexts/ExchangeRateContext';
 import { useTheme } from '../contexts/ThemeContext';
 import CustomSelect from './CustomSelect';
 import { logAuditEvent } from '../utils/audit';
+import { getLicenseState, PLAN_LIMITS } from '../utils/license';
 import CustomDatePicker from './CustomDatePicker';
+import * as XLSX from 'xlsx';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -214,6 +216,21 @@ export default function Inventario({ searchTerm = '', user }: InventarioProps) {
           type: 'error'
         });
         return;
+      }
+
+      // Enforce product limits by active plan
+      const licState = getLicenseState();
+      if (!licState.demoActive && licState.plan) {
+        const limit = PLAN_LIMITS[licState.plan].maxProducts;
+        const currentCount = await db.products.find().exec().then(docs => docs.length);
+        if (currentCount >= limit) {
+          setAlertConfig({
+            title: 'Límite del Plan Superado',
+            message: `Su plan actual (${licState.plan.toUpperCase()}) tiene un límite de ${limit} productos en el catálogo. Actualice su suscripción en la sección Acerca de para registrar más productos.`,
+            type: 'error'
+          });
+          return;
+        }
       }
 
       const prodId = crypto.randomUUID();
@@ -485,26 +502,30 @@ export default function Inventario({ searchTerm = '', user }: InventarioProps) {
       
       productSales.forEach(sale => {
         const item = sale.items.find((i: any) => i.productId === prod.id);
-        movements.push({
-          date: sale.createdAt,
-          type: 'VENTA',
-          reference: sale.ticketNumber,
-          qtyChange: -item.quantity,
-          user: sale.cashierId || 'Cajero',
-          justification: 'Venta facturada en terminal POS.'
-        });
+        if (item) {
+          movements.push({
+            date: sale.createdAt,
+            type: 'VENTA',
+            reference: sale.ticketNumber,
+            qtyChange: -item.quantity,
+            user: sale.cashierId || 'Cajero',
+            justification: 'Venta facturada en terminal POS.'
+          });
+        }
       });
       
       productPurchases.forEach(purchase => {
         const item = purchase.items.find((i: any) => i.productId === prod.id);
-        movements.push({
-          date: purchase.createdAt,
-          type: 'COMPRA',
-          reference: purchase.invoiceNumber || 'S/N',
-          qtyChange: item.quantity,
-          user: 'Admin',
-          justification: 'Ingreso por reabastecimiento de inventario.'
-        });
+        if (item) {
+          movements.push({
+            date: purchase.createdAt,
+            type: 'COMPRA',
+            reference: purchase.invoiceNumber || 'S/N',
+            qtyChange: item.quantity,
+            user: 'Admin',
+            justification: 'Ingreso por reabastecimiento de inventario.'
+          });
+        }
       });
       
       productAudits.forEach(log => {
@@ -613,6 +634,53 @@ export default function Inventario({ searchTerm = '', user }: InventarioProps) {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+  };
+
+  const handleExportExcel = () => {
+    if (products.length === 0) return;
+    
+    const data = products.map(p => {
+      const isLowStock = p.stock <= (p.minStock || 5);
+      const marginVal = p.price > 0 ? ((p.price - p.cost) / p.price) * 100 : 0;
+      const status = p.stock === 0 ? 'Agotado' : isLowStock ? 'Bajo Stock' : 'Al día';
+      const priceVES = convertToVES(p.price);
+      const costVES = convertToVES(p.cost);
+
+      return {
+        'Código': p.code,
+        'Nombre del Producto': p.name,
+        'Categoría': p.category,
+        'Costo de Compra (USD)': p.cost,
+        'Costo de Compra (VES)': costVES,
+        'Precio de Venta (USD)': p.price,
+        'Precio de Venta (VES)': priceVES,
+        'Margen (%)': parseFloat(marginVal.toFixed(2)),
+        'Existencia': p.stock,
+        'Unidad': p.unit || 'unidades',
+        'Stock Mínimo': p.minStock || 5,
+        'Expiración': p.expiryDate || 'N/A',
+        'Estado': status
+      };
+    });
+
+    const worksheet = XLSX.utils.json_to_sheet(data);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Inventario');
+
+    // Ajustar el ancho de las columnas automáticamente
+    const colWidths = Object.keys(data[0] || {}).map(key => {
+      const maxLength = Math.max(
+        key.length,
+        ...data.map(row => {
+          const val = row[key as keyof typeof row];
+          return val ? val.toString().length : 0;
+        })
+      );
+      return { wch: maxLength + 3 };
+    });
+    worksheet['!cols'] = colWidths;
+
+    XLSX.writeFile(workbook, `inventario_completo_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
   const handleImportCSV = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -731,6 +799,23 @@ export default function Inventario({ searchTerm = '', user }: InventarioProps) {
     
     try {
       const db = await getDatabase();
+
+      // Enforce product limits by active plan for bulk import
+      const licState = getLicenseState();
+      if (!licState.demoActive && licState.plan) {
+        const limit = PLAN_LIMITS[licState.plan].maxProducts;
+        const currentCount = await db.products.find().exec().then(docs => docs.length);
+        const newProductsCount = csvStats.newProds;
+        if (currentCount + newProductsCount > limit) {
+          setAlertConfig({
+            title: 'Límite del Plan Superado',
+            message: `Esta importación crearía ${newProductsCount} productos nuevos, elevando su catálogo a ${currentCount + newProductsCount} productos, lo cual supera el límite de ${limit} de su plan ${licState.plan.toUpperCase()}. Actualice su suscripción en la sección Acerca de para importar.`,
+            type: 'error'
+          });
+          return;
+        }
+      }
+
       const insertPromises: Promise<any>[] = [];
       
       for (const p of csvPreview) {
@@ -916,6 +1001,7 @@ export default function Inventario({ searchTerm = '', user }: InventarioProps) {
 
             {isAdmin && (
               <button 
+                data-tour="nuevo-producto-btn"
                 onClick={() => setShowAddModal(true)}
                 className="btn-yellow"
                 style={{ gap: '8px', padding: '10px 18px', borderRadius: 'var(--button-radius)' }}
@@ -1205,7 +1291,10 @@ export default function Inventario({ searchTerm = '', user }: InventarioProps) {
           padding: isMobile ? 0 : '20px'
         }}>
           
-          <div className={`widget ${!isMobile ? 'animate-entrance' : ''} modal-registration-content`} style={{
+          <div 
+            data-tour="nuevo-producto-modal"
+            className={`widget ${!isMobile ? 'animate-entrance' : ''} modal-registration-content`} 
+            style={{
             width: '100%',
             maxWidth: isMobile ? '100%' : '620px',
             padding: 0,
@@ -2225,7 +2314,7 @@ export default function Inventario({ searchTerm = '', user }: InventarioProps) {
                       height: '240px',
                       position: 'relative'
                     }}>
-                      <Line data={chartData} options={chartOptions} />
+                      <Line data={chartData} options={chartOptions as any} />
                     </div>
 
                     {/* Cost History Table */}
@@ -2360,23 +2449,33 @@ export default function Inventario({ searchTerm = '', user }: InventarioProps) {
                 Exporte la plantilla del catálogo de productos actual o cargue un archivo CSV formateado para actualizar o añadir productos de manera masiva.
               </p>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
                 <button
                   onClick={handleExportCSV}
                   className="btn-pill-dark"
-                  style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', padding: '16px', borderRadius: '12px', border: '1.5px dashed var(--border-color)', cursor: 'pointer', backgroundColor: 'var(--bg-primary)' }}
+                  style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', padding: '16px', borderRadius: '12px', border: '1.5px dashed var(--border-color)', cursor: 'pointer', backgroundColor: 'var(--bg-primary)', height: '100%', justifyContent: 'center' }}
                 >
                   <ShoppingBag size={20} style={{ color: 'var(--brand-primary)' }} />
-                  <span style={{ fontSize: '13px', fontWeight: 800, color: 'var(--text-primary)' }}>Exportar Catálogo Actual</span>
-                  <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Descarga archivo inventario.csv</span>
+                  <span style={{ fontSize: '13px', fontWeight: 800, color: 'var(--text-primary)' }}>Exportar CSV</span>
+                  <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Descarga inventario.csv</span>
+                </button>
+
+                <button
+                  onClick={handleExportExcel}
+                  className="btn-pill-dark"
+                  style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', padding: '16px', borderRadius: '12px', border: '1.5px dashed var(--border-color)', cursor: 'pointer', backgroundColor: 'var(--bg-primary)', height: '100%', justifyContent: 'center' }}
+                >
+                  <FileSpreadsheet size={20} style={{ color: '#10b981' }} />
+                  <span style={{ fontSize: '13px', fontWeight: 800, color: 'var(--text-primary)' }}>Exportar Excel</span>
+                  <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Descarga inventario.xlsx</span>
                 </button>
 
                 <label
                   className="btn-pill-dark"
-                  style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', padding: '16px', borderRadius: '12px', border: '1.5px dashed var(--brand-gold)', cursor: 'pointer', backgroundColor: 'var(--bg-primary)', textAlign: 'center' }}
+                  style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', padding: '16px', borderRadius: '12px', border: '1.5px dashed var(--brand-gold)', cursor: 'pointer', backgroundColor: 'var(--bg-primary)', textAlign: 'center', height: '100%', justifyContent: 'center' }}
                 >
                   <RefreshCw size={20} style={{ color: 'var(--brand-gold)' }} />
-                  <span style={{ fontSize: '13px', fontWeight: 800, color: 'var(--text-primary)' }}>Seleccionar archivo CSV</span>
+                  <span style={{ fontSize: '13px', fontWeight: 800, color: 'var(--text-primary)' }}>Seleccionar CSV</span>
                   <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Carga o arrastra un .csv</span>
                   <input
                     type="file"

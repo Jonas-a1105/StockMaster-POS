@@ -5,6 +5,7 @@ import { useBusinessSettings } from '../contexts/BusinessSettingsContext';
 import CustomSelect from './CustomSelect';
 import { useExchangeRate } from '../contexts/ExchangeRateContext';
 import { logAuditEvent } from '../utils/audit';
+import { getLicenseState, PLAN_LIMITS } from '../utils/license';
 
 interface ClientesProps {
   user: {
@@ -247,6 +248,20 @@ export default function Clientes({ searchTerm = '', user }: ClientesProps) {
         type: 'error'
       });
       return;
+    }
+
+    // Enforce client limit check
+    const licState = getLicenseState();
+    if (!licState.demoActive && licState.plan) {
+      const limit = PLAN_LIMITS[licState.plan].maxClients;
+      if (clients.length >= limit) {
+        setAlertConfig({
+          title: 'Límite del Plan Superado',
+          message: `Su plan actual (${licState.plan.toUpperCase()}) tiene un límite de ${limit} clientes registrados en el sistema. Actualice su suscripción en la sección Acerca de para registrar más clientes.`,
+          type: 'error'
+        });
+        return;
+      }
     }
 
     try {
@@ -1295,17 +1310,17 @@ export default function Clientes({ searchTerm = '', user }: ClientesProps) {
                     </div>
 
                     {/* Progress Bar */}
-                    {selectedClient.creditLimit > 0 && (
+                    {(selectedClient.creditLimit || 0) > 0 && (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10.5px', color: 'var(--text-secondary)', fontWeight: 700 }}>
                           <span>Crédito Consumido</span>
-                          <span>{((selectedClient.creditBalance || 0) / selectedClient.creditLimit * 100).toFixed(1)}%</span>
+                          <span>{((selectedClient.creditBalance || 0) / (selectedClient.creditLimit || 0) * 100).toFixed(1)}%</span>
                         </div>
                         <div style={{ width: '100%', height: '8px', backgroundColor: 'var(--bg-input)', borderRadius: '4px', overflow: 'hidden' }}>
                           <div style={{ 
-                            width: `${Math.min(100, ((selectedClient.creditBalance || 0) / selectedClient.creditLimit * 100))}%`, 
+                            width: `${Math.min(100, ((selectedClient.creditBalance || 0) / (selectedClient.creditLimit || 0) * 100))}%`, 
                             height: '100%', 
-                            backgroundColor: ((selectedClient.creditBalance || 0) / selectedClient.creditLimit) > 0.85 ? '#ef4444' : 'var(--brand-teal)', 
+                            backgroundColor: ((selectedClient.creditBalance || 0) / (selectedClient.creditLimit || 0)) > 0.85 ? '#ef4444' : 'var(--brand-teal)', 
                             transition: 'width 0.3s ease' 
                           }} />
                         </div>

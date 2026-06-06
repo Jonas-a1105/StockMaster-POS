@@ -11,15 +11,25 @@ export class AuditoriaService {
     action: string,
     details: any,
     ipAddress: string,
-    userAgent: string
+    userAgent: string,
+    severity?: string
   ) {
+    const deducedSeverity = severity || (
+      action.endsWith('_ELIMINAR') || action.includes('ELIMINAR') || action.includes('BORRAR') || action.includes('SOBREESCRITURA')
+        ? 'CRITICAL'
+        : (action.includes('_EDITAR') || action.includes('EDITAR') || action.includes('MODIFICAR') || action.includes('CONFLICT') || action.includes('CIERRE') || action.includes('AJUSTE'))
+          ? 'WARNING'
+          : 'INFO'
+    );
+
     return this.prisma.auditLog.create({
       data: {
         userId,
         action,
         details: JSON.stringify(details),
         ipAddress,
-        userAgent
+        userAgent,
+        severity: deducedSeverity
       }
     });
   }

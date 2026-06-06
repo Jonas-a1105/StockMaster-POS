@@ -18,8 +18,8 @@ export default function TopProductsCard() {
   useEffect(() => {
     let salesSub: { unsubscribe: () => void } | undefined;
     let productsSub: { unsubscribe: () => void } | undefined;
-    let productsList: ProductDocType[] = [];
-    let salesList: SaleDocType[] = [];
+    let productsList: any[] = [];
+    let salesList: any[] = [];
 
     const calculateTopProducts = () => {
       const productMap = new Map<string, ProductDocType>(productsList.map(p => [p.id, p]));
@@ -27,7 +27,7 @@ export default function TopProductsCard() {
 
       salesList.forEach((sale) => {
         if (!sale.items) return;
-        sale.items.forEach((item) => {
+        sale.items.forEach((item: any) => {
           const prod = productMap.get(item.productId);
           const name = prod?.name || `Producto #${item.productId.slice(-4)}`;
           const category = prod?.category || 'General';

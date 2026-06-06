@@ -345,8 +345,8 @@ export default function AppUpdater({
           transition: 'all 0.3s'
         }}
       >
-        {/* Botón de cierre en la parte superior derecha */}
-        {state !== 'DOWNLOADING' && (
+        {/* Botón de cierre en la parte superior derecha — siempre visible */}
+        {true && (
           <button 
             onClick={onClose}
             className="theme-toggle-btn"
@@ -361,6 +361,7 @@ export default function AppUpdater({
               cursor: 'pointer'
             }}
             title="Cerrar modal"
+            aria-label="Cerrar"
           >
             <X size={16} />
           </button>

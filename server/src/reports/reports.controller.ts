@@ -60,4 +60,18 @@ export class ReportsController {
     }
     return this.reportsService.getRecentAuditLogs(limit);
   }
+
+  @Get('cold-products')
+  async getColdProducts(@Query('days') daysStr?: string) {
+    let days = 30;
+    if (daysStr) {
+      const parsed = Number(daysStr);
+      if (isNaN(parsed) || !Number.isInteger(parsed) || parsed <= 0) {
+        throw new BadRequestException('El parámetro days debe ser un número entero positivo.');
+      }
+      days = parsed;
+    }
+    return this.reportsService.getColdProducts(days);
+  }
 }
+

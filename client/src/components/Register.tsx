@@ -373,7 +373,7 @@ export default function Register({ onRegisterSuccess, onNavigateToLogin, onBackT
               }} />
               <input
                 type="password"
-                placeholder="Mínimo 6 caracteres"
+                placeholder="Mínimo 8 caracteres, 1 mayúscula, 1 minúscula, 1 número, 1 especial"
                 value={password}
                 onChange={(e) => { setPassword(e.target.value); setErrorMsg(''); }}
                 className="glass-input"

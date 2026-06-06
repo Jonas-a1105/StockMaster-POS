@@ -10,7 +10,7 @@ export class AuthGuard implements CanActivate {
     private authService: AuthService
   ) {}
 
-  canActivate(context: ExecutionContext): boolean {
+  async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest();
     const authHeader = request.headers['authorization'];
 
@@ -19,7 +19,7 @@ export class AuthGuard implements CanActivate {
     }
 
     const token = authHeader.split(' ')[1];
-    if (this.authService.isTokenBlacklisted(token)) {
+    if (await this.authService.isTokenBlacklisted(token)) {
       throw new UnauthorizedException('Token inválido o expirado.');
     }
 

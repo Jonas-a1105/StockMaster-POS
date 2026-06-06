@@ -44,6 +44,7 @@ export const ProductGrid: React.FC<ProductGridProps> = ({
             <Search className="search-icon" size={16} />
             <input
               type="text"
+              data-tour="pos-search-input"
               placeholder="Buscar por nombre, código de barras o categoría..."
               className="search-input pos-search-input"
               value={localSearchTerm}
@@ -146,7 +147,7 @@ export const ProductGrid: React.FC<ProductGridProps> = ({
         gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))',
         gap: '20px',
         paddingRight: '6px',
-      }}>
+      }} data-tour="pos-product-grid">
         {filteredProducts.length === 0 ? (
           <div style={{ gridColumn: '1/-1', textAlign: 'center', padding: '40px', color: 'var(--text-secondary)', fontWeight: 600 }}>
             No se encontraron productos disponibles en el inventario local.

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { 
   Search,
   Check,
@@ -11,13 +11,18 @@ import {
   Edit,
   Info,
   AlertCircle,
-  Sparkles
+  Sparkles,
+  Scan,
+  Upload,
+  FileText,
+  Loader
 } from 'lucide-react';
 import { getDatabase } from '../db/database';
 import { syncWorker } from '../db/sync';
 import { logAuditEvent } from '../utils/audit';
 import { useExchangeRate } from '../contexts/ExchangeRateContext';
 import CustomSelect from './CustomSelect';
+import { createWorker } from 'tesseract.js';
 
 interface ComprasProps {
   user: {
@@ -85,6 +90,13 @@ export default function Compras({ user, searchTerm = '' }: ComprasProps) {
   // Toast
   const [showSuccessToast, setShowSuccessToast] = useState<string | null>(null);
   const [alertConfig, setAlertConfig] = useState<{ title: string; message: string; type: 'success' | 'error' | 'info' } | null>(null);
+
+  // OCR scanning state
+  const [showScanner, setShowScanner] = useState(false);
+  const [ocrProgress, setOcrProgress] = useState(0);
+  const [isScanning, setIsScanning] = useState(false);
+  const [ocrImage, setOcrImage] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // C4: Pagination state
   const [currentPage, setCurrentPage] = useState(1);
@@ -564,6 +576,16 @@ export default function Compras({ user, searchTerm = '' }: ComprasProps) {
             >
               <Plus size={16} />
               <span>Registrar Compra</span>
+            </button>
+
+            <button 
+              onClick={() => { setOcrImage(null); setOcrProgress(0); setShowScanner(true); }}
+              className="btn-pill-dark"
+              style={{ gap: '8px', padding: '10px 18px', borderRadius: 'var(--button-radius)', backgroundColor: 'var(--bg-input)', display: 'flex', alignItems: 'center', cursor: 'pointer' }}
+              title="Escanear Factura con OCR"
+            >
+              <Scan size={14} style={{ color: 'var(--brand-primary)' }} />
+              <span>Escanear Factura</span>
             </button>
 
             <button 
@@ -1174,7 +1196,211 @@ export default function Compras({ user, searchTerm = '' }: ComprasProps) {
         </div>
       )}
 
-      {/* MODAL 3: ALERTA / ACCION COMÚN DE MENSAJE */}
+      {/* MODAL 3: ESCÁNER OCR DE FACTURA */}
+      {showScanner && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.65)', backdropFilter: 'blur(8px)',
+          display: 'flex', justifyContent: 'center', alignItems: 'center',
+          zIndex: 1600, padding: '20px'
+        }}>
+          <div className="widget animate-entrance" style={{
+            width: '100%', maxWidth: '540px',
+            backgroundColor: 'var(--bg-card)', borderRadius: 'var(--card-radius)',
+            border: '1.5px solid var(--border-color)', boxShadow: '0 20px 50px rgba(0,0,0,0.4)',
+            overflow: 'hidden', display: 'flex', flexDirection: 'column'
+          }}>
+            <div style={{ padding: '20px 24px', borderBottom: '1.5px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Scan size={18} style={{ color: 'var(--brand-primary)' }} />
+                <h4 style={{ fontSize: '16px', fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>
+                  Escáner de Factura (OCR)
+                </h4>
+              </div>
+              <button onClick={() => { setShowScanner(false); setOcrImage(null); }} style={{ border: 'none', backgroundColor: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer', padding: '4px' }}>
+                <X size={18} />
+              </button>
+            </div>
+
+            <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px', alignItems: 'center' }}>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                style={{ display: 'none' }}
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  const reader = new FileReader();
+                  reader.onload = (ev) => {
+                    const dataUrl = ev.target?.result as string;
+                    setOcrImage(dataUrl);
+                  };
+                  reader.readAsDataURL(file);
+                }}
+              />
+
+              {!ocrImage ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', alignItems: 'center', width: '100%' }}>
+                  <div style={{
+                    width: '100%', minHeight: '200px', border: '2px dashed var(--border-color)', borderRadius: '16px',
+                    display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px',
+                    padding: '32px', cursor: 'pointer', backgroundColor: 'var(--bg-primary)'
+                  }}
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    <Upload size={40} style={{ color: 'var(--text-muted)' }} />
+                    <span style={{ color: 'var(--text-secondary)', fontWeight: 600, fontSize: '14px' }}>
+                      Haz clic para seleccionar una imagen de factura
+                    </span>
+                    <span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>
+                      o usa la cámara de tu dispositivo
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', width: '100%', alignItems: 'center' }}>
+                  <img src={ocrImage} alt="Factura" style={{ maxHeight: '280px', width: '100%', objectFit: 'contain', borderRadius: '12px', border: '1px solid var(--border-color)' }} />
+                  
+                  {isScanning ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', width: '100%', alignItems: 'center' }}>
+                      <Loader size={24} className="spin" style={{ color: 'var(--brand-primary)' }} />
+                      <span style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>Procesando OCR... {ocrProgress}%</span>
+                      <div style={{ width: '100%', height: '6px', backgroundColor: 'var(--bg-input)', borderRadius: '3px', overflow: 'hidden' }}>
+                        <div style={{ width: `${ocrProgress}%`, height: '100%', backgroundColor: 'var(--brand-primary)', borderRadius: '3px', transition: 'width 0.3s' }} />
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <button
+                        onClick={() => { setOcrImage(null); }}
+                        className="btn-pill-dark"
+                        style={{ padding: '8px 16px', borderRadius: 'var(--button-radius)', backgroundColor: 'var(--bg-card)' }}
+                      >
+                        Cambiar Imagen
+                      </button>
+                      <button
+                        onClick={async () => {
+                          if (!ocrImage) return;
+                          setIsScanning(true);
+                          setOcrProgress(0);
+                          try {
+                            const worker: any = await createWorker('spa');
+                            worker.setLogger((m: any) => {
+                              if (m.status === 'recognizing text') {
+                                setOcrProgress(Math.round(m.progress * 100));
+                              }
+                            });
+                            const { data } = await worker.recognize(ocrImage);
+                            await worker.terminate();
+                            setOcrProgress(100);
+
+                            // Parse OCR text into form fields
+                            const text = data.text;
+                            const lines = text.split('\n').filter((l: string) => l.trim());
+
+                            // Extract supplier name (look for RIF or Razón Social)
+                            let supplier = '';
+                            const supplierRegex = /(?:proveedor|empresa|raz[oó]n social|comercializadora|distribuidora)\s*:?\s*(.+)/i;
+                            for (const line of lines) {
+                              const m = line.match(supplierRegex);
+                              if (m) { supplier = m[1].trim(); break; }
+                            }
+                            if (!supplier) {
+                              // Try to find first line with company-like name
+                              for (const line of lines.slice(0, 5)) {
+                                if (line.length > 5 && !line.match(/^\d/) && !line.match(/rif|factura|fecha|telf/i)) {
+                                  supplier = line.trim(); break;
+                                }
+                              }
+                            }
+
+                            // Extract invoice number
+                            let invoice = '';
+                            const invoiceRegex = /(?:factura|nro|no\.|n°|comprobante|documento)\s*(?:n[°º]?|nro\.?|n\.?|de)?\s*:?\s*([\w\-\.\/]+)/i;
+                            for (const line of lines) {
+                              const m = line.match(invoiceRegex);
+                              if (m) { invoice = m[1].trim(); break; }
+                            }
+                            if (!invoice) {
+                              const fallbackInvoice = text.match(/(?:FAC|FC|FV|FE|NC|ND)[\-\s]*\d+/i);
+                              if (fallbackInvoice) invoice = fallbackInvoice[0].trim();
+                            }
+
+                            // Extract items (lines with quantity + price patterns)
+                            const parsedItems: Array<{ code: string; name: string; category: string; quantity: number; costUSD: number }> = [];
+                            const itemRegex = /(\d+)\s*[xX*]\s*([\w\sáéíóúüñÁÉÍÓÚÜÑ\-\.]+?)\s*(\d+[.,]\d{2})/;
+                            for (const line of lines) {
+                              const m = line.match(itemRegex);
+                              if (m) {
+                                const qty = parseInt(m[1]);
+                                const name = m[2].trim().substring(0, 40);
+                                const price = parseFloat(m[3].replace(',', '.'));
+                                if (qty > 0 && qty < 10000 && price > 0) {
+                                  parsedItems.push({ code: '', name, category: 'General', quantity: qty, costUSD: price });
+                                }
+                              }
+                            }
+
+                            // Fallback: try to find lines with quantity at start and price at end
+                            if (parsedItems.length === 0) {
+                              const altItemRegex = /^(\d+)\s+(.+?)\s+(\d+[.,]\d{2})\s*$/;
+                              for (const line of lines) {
+                                const m = line.match(altItemRegex);
+                                if (m) {
+                                  const qty = parseInt(m[1]);
+                                  const name = m[2].trim().substring(0, 40);
+                                  const price = parseFloat(m[3].replace(',', '.'));
+                                  if (qty > 0 && qty < 10000 && price > 0) {
+                                    parsedItems.push({ code: '', name, category: 'General', quantity: qty, costUSD: price });
+                                  }
+                                }
+                              }
+                            }
+
+                            // Populate form with scanned data
+                            if (supplier) {
+                              setSupplierInput(supplier);
+                              setInvoiceNumberInput(invoice || `OCR-${Date.now().toString().slice(-6)}`);
+                            }
+                            if (parsedItems.length > 0) {
+                              setFormItems(parsedItems);
+                            } else {
+                              // At least put first line as a single item
+                              const firstLine = lines.find((l: string) => l.length > 10 && !l.match(/^[\d\s\-:.,]+$/));
+                              if (firstLine) {
+                                const name = firstLine.trim().substring(0, 100).replace(/[^\w\sáéíóúüñÁÉÍÓÚÜÑ\-\.]/g, '');
+                                setFormItems([{ code: '', name: name || 'Producto OCR', category: 'General', quantity: 1, costUSD: 0.0 }]);
+                              }
+                            }
+
+                            setShowScanner(false);
+                            setShowAddModal(true);
+                            setShowSuccessToast('Factura escaneada con OCR. Verifica los datos antes de guardar.');
+                            setTimeout(() => setShowSuccessToast(null), 4000);
+                          } catch (err) {
+                            console.error('OCR error:', err);
+                            setAlertConfig({ title: 'Error de OCR', message: 'No se pudo procesar la imagen. Verifica que sea una factura clara.', type: 'error' });
+                          } finally {
+                            setIsScanning(false);
+                          }
+                        }}
+                        className="btn-yellow"
+                        style={{ padding: '8px 20px', borderRadius: 'var(--button-radius)' }}
+                      >
+                        <FileText size={14} /> Procesar Factura
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 4: ALERTA / ACCION COMÚN DE MENSAJE */}
       {alertConfig && (
         <div style={{
           position: 'fixed',

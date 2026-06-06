@@ -1,6 +1,7 @@
-import React from 'react';
-import { X, CheckCircle, Printer } from 'lucide-react';
+import React, { useCallback } from 'react';
+import { X, CheckCircle, Printer, Download } from 'lucide-react';
 import { useBusinessSettings } from '../contexts/BusinessSettingsContext';
+import { printTicket, type TicketData } from '../utils/thermal';
 
 interface TicketPreviewModalProps {
   ticketReceipt: any;
@@ -18,6 +19,31 @@ export const TicketPreviewModal: React.FC<TicketPreviewModalProps> = ({
   if (!ticketReceipt) return null;
 
   const ivaPercentage = ticketReceipt.ivaRate ?? settings.ivaRate;
+
+  const handlePrint = useCallback(() => {
+    const ticketData: TicketData = {
+      title: 'StockMasterPro',
+      businessName: settings.businessName || 'Mi Negocio',
+      businessRIF: settings.businessRIF,
+      ticketNumber: ticketReceipt.ticketNumber,
+      date: ticketReceipt.date,
+      cashier: ticketReceipt.cashierName,
+      client: ticketReceipt.clientName,
+      items: (ticketReceipt.items || []).map((i: any) => ({
+        name: i.name,
+        qty: i.quantity,
+        price: i.price,
+        total: i.price * i.quantity,
+      })),
+      subtotal: ticketReceipt.subtotalUSD ?? ticketReceipt.totalUSD,
+      iva: ticketReceipt.ivaUSD ?? 0,
+      igtf: ticketReceipt.igtfUSD,
+      total: ticketReceipt.totalUSD,
+      paymentMethod: ticketReceipt.paymentMethod,
+      dolarRate: ticketReceipt.dolarRate,
+    };
+    printTicket(ticketData);
+  }, [ticketReceipt, settings]);
 
   return (
     <div className="modal-registration-backdrop" style={{
@@ -182,7 +208,7 @@ export const TicketPreviewModal: React.FC<TicketPreviewModalProps> = ({
           ...(isMobile ? { position: 'fixed' as const, bottom: 0, left: 0, right: 0, zIndex: 10 } : {}),
         }}>
           <button
-            onClick={() => window.print()}
+            onClick={handlePrint}
             className="btn-pill-dark"
             style={{ flex: 1, gap: '6px', justifyContent: 'center', borderRadius: 'var(--button-radius)', backgroundColor: 'var(--bg-card)' }}
           >

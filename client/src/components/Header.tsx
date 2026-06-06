@@ -1,8 +1,10 @@
-import { useState, useEffect } from 'react';
-import { Search, Sun, Moon, RefreshCw, LogOut, Wifi, WifiOff, Menu, ArrowUpCircle } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { Search, Sun, Moon, RefreshCw, LogOut, Wifi, WifiOff, Menu, ArrowUpCircle, Mail, CheckCircle, DollarSign } from 'lucide-react';
 import avatarImg from '../assets/avatar.png';
 import { useExchangeRate } from '../contexts/ExchangeRateContext';
 import { getDatabase } from '../db/database';
+import { API_URL } from '../config';
+import { createPortal } from 'react-dom';
 
 interface HeaderProps {
   searchTerm: string;
@@ -55,10 +57,43 @@ export default function Header({
   updateStatus,
   onOpenUpdater
 }: HeaderProps) {
-  const { dolarRate, isManual } = useExchangeRate();
+  const { dolarRate, isManual, isStale } = useExchangeRate();
   const [localInput, setLocalInput] = useState('');
   const [results, setResults] = useState<Array<{ type: string; id: string; name: string; details: string; tab: 'inventario' | 'clientes' | 'proveedores' | 'nomina' }>>([]);
   const [showDropdown, setShowDropdown] = useState(false);
+  const [verifyMsg, setVerifyMsg] = useState('');
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const [isMobileSearchOpen, setIsMobileSearchOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Close search modal on Escape key press
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsMobileSearchOpen(false);
+      }
+    };
+    if (isMobileSearchOpen) {
+      window.addEventListener('keydown', handleKeyDown);
+    }
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isMobileSearchOpen]);
+
+  const handleSendVerification = async () => {
+    try {
+      const token = localStorage.getItem('auth_token');
+      const res = await fetch(`${API_URL}/auth/send-verification`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await res.json();
+      setVerifyMsg(data.message || 'Enviado');
+      setTimeout(() => setVerifyMsg(''), 5000);
+    } catch { setVerifyMsg('Error al enviar'); setTimeout(() => setVerifyMsg(''), 3000); }
+  };
 
   // Sync local input with global search term if global is cleared or changes
   useEffect(() => {
@@ -76,12 +111,11 @@ export default function Header({
       try {
         const db = await getDatabase();
         const escapedInput = escapeRegex(localInput);
-        const searchRegex = new RegExp(escapedInput, 'i');
         
         // 1. Search products
         const products = await db.products.find({
           selector: {
-            name: { $regex: searchRegex as any }
+            name: { $regex: escapedInput, $options: 'i' }
           }
         }).exec();
         const productResults = products.slice(0, 3).map(p => ({
@@ -95,7 +129,7 @@ export default function Header({
         // 2. Search clients
         const clients = await db.clients.find({
           selector: {
-            name: { $regex: searchRegex as any }
+            name: { $regex: escapedInput, $options: 'i' }
           }
         }).exec();
         const clientResults = clients.slice(0, 3).map(c => ({
@@ -161,29 +195,53 @@ export default function Header({
         className="sidebar-overlay-trigger"
         onClick={() => setSidebarExpanded?.(!sidebarExpanded)}
         title="Abrir menú"
+        aria-label="Abrir menú de navegación"
       >
         <Menu size={18} />
       </button>
 
       {/* Search container */}
-      <div className="search-container" style={{ position: 'relative' }}>
+      <div className="search-container desktop-search-container" style={{ position: 'relative' }}>
         <Search className="search-icon" size={16} />
         <input 
+          ref={inputRef}
           type="text" 
           placeholder="Buscar producto, ticket o nómina..." 
           className="search-input" 
           value={localInput}
           onChange={(e) => {
             setLocalInput(e.target.value);
+            setActiveIndex(-1);
             setShowDropdown(true);
           }}
-          onFocus={() => setShowDropdown(true)}
+          onFocus={() => { setShowDropdown(true); setActiveIndex(-1); }}
           onBlur={() => setTimeout(() => setShowDropdown(false), 200)}
+          onKeyDown={(e) => {
+            if (!showDropdown || results.length === 0) return;
+            if (e.key === 'ArrowDown') {
+              e.preventDefault();
+              setActiveIndex(prev => (prev < results.length - 1 ? prev + 1 : 0));
+            } else if (e.key === 'ArrowUp') {
+              e.preventDefault();
+              setActiveIndex(prev => (prev > 0 ? prev - 1 : results.length - 1));
+            } else if (e.key === 'Enter' && activeIndex >= 0) {
+              e.preventDefault();
+              handleResultClick(results[activeIndex]);
+            } else if (e.key === 'Escape') {
+              setShowDropdown(false);
+            }
+          }}
+          role="combobox"
+          aria-expanded={showDropdown}
+          aria-autocomplete="list"
+          aria-label="Búsqueda global"
         />
 
-        {showDropdown && results.length > 0 && (
+        {showDropdown && (
           <div 
+            ref={dropdownRef}
             className="premium-popup"
+            role="listbox"
             style={{
               position: 'absolute',
               top: '48px',
@@ -196,37 +254,47 @@ export default function Header({
               animation: 'entrance 0.2s cubic-bezier(0.16, 1, 0.3, 1)'
             }}
           >
-            {results.map((res, index) => (
-              <div
-                key={`${res.type}-${res.id}-${index}`}
-                onClick={() => handleResultClick(res)}
-                style={{
-                  padding: '10px 16px',
-                  borderBottom: index === results.length - 1 ? 'none' : '1px solid var(--border-color)',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                }}
-                className="autocomplete-item-row"
-              >
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
-                  <span style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: '13px' }}>{res.name}</span>
-                  <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{res.details}</span>
-                </div>
-                <span style={{
-                  fontSize: '9px',
-                  fontWeight: 800,
-                  textTransform: 'uppercase',
-                  padding: '2px 8px',
-                  borderRadius: '50px',
-                  backgroundColor: res.type === 'producto' ? 'rgba(14,165,164,0.1)' : res.type === 'cliente' ? 'rgba(59,130,246,0.1)' : res.type === 'proveedor' ? 'rgba(168,85,247,0.1)' : 'rgba(245,158,11,0.1)',
-                  color: res.type === 'producto' ? 'var(--brand-teal)' : res.type === 'cliente' ? '#3b82f6' : res.type === 'proveedor' ? '#a855f7' : '#f59e0b'
-                }}>
-                  {res.type}
-                </span>
+            {results.length === 0 ? (
+              <div style={{ padding: '20px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '12px' }}>
+                Sin resultados para <strong>"{localInput}"</strong>
               </div>
-            ))}
+            ) : (
+              results.map((res, index) => (
+                <div
+                  key={`${res.type}-${res.id}-${index}`}
+                  role="option"
+                  aria-selected={index === activeIndex}
+                  onClick={() => handleResultClick(res)}
+                  onMouseEnter={() => setActiveIndex(index)}
+                  style={{
+                    padding: '10px 16px',
+                    borderBottom: index === results.length - 1 ? 'none' : '1px solid var(--border-color)',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    backgroundColor: index === activeIndex ? 'var(--bg-input)' : 'transparent'
+                  }}
+                  className="autocomplete-item-row"
+                >
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+                    <span style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: '13px' }}>{res.name}</span>
+                    <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{res.details}</span>
+                  </div>
+                  <span style={{
+                    fontSize: '9px',
+                    fontWeight: 800,
+                    textTransform: 'uppercase',
+                    padding: '2px 8px',
+                    borderRadius: '50px',
+                    backgroundColor: res.type === 'producto' ? 'rgba(14,165,164,0.1)' : res.type === 'cliente' ? 'rgba(59,130,246,0.1)' : res.type === 'proveedor' ? 'rgba(168,85,247,0.1)' : 'rgba(245,158,11,0.1)',
+                    color: res.type === 'producto' ? 'var(--brand-teal)' : res.type === 'cliente' ? '#3b82f6' : res.type === 'proveedor' ? '#a855f7' : '#f59e0b'
+                  }}>
+                    {res.type}
+                  </span>
+                </div>
+              ))
+            )}
           </div>
         )}
       </div>
@@ -239,19 +307,39 @@ export default function Header({
       {/* Right controls */}
       <div className="header-right">
         
+        {/* Mobile Search Icon Trigger */}
+        <button 
+          className="theme-toggle-btn mobile-search-trigger animate-entrance"
+          onClick={() => setIsMobileSearchOpen(true)}
+          title="Buscar..."
+          aria-label="Abrir búsqueda global"
+        >
+          <Search size={16} />
+        </button>
+
         {/* Tasa Oficial BCV */}
         <div 
           className="rate-badge animate-entrance"
           onClick={onOpenCalculator}
-          style={isManual ? {
-            borderColor: 'rgba(168, 85, 247, 0.35)',
-            backgroundColor: 'rgba(168, 85, 247, 0.06)',
-            color: '#a855f7'
-          } : undefined}
+          style={{
+            ...(isManual ? {
+              borderColor: 'rgba(168, 85, 247, 0.35)',
+              backgroundColor: 'rgba(168, 85, 247, 0.06)',
+              color: '#a855f7'
+            } : {}),
+            position: 'relative'
+          }}
           title={isManual ? "Tasa establecida manualmente. ¡Haz clic para abrir la calculadora/ajustar!" : "Tasa oficial BCV en tiempo real. ¡Haz clic para abrir la calculadora/ajustar!"}
+          role="button"
+          aria-label="Tipo de cambio"
+          tabIndex={0}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpenCalculator(); } }}
         >
-          <span style={{ fontSize: '12px' }}>🪙</span>
+          <DollarSign size={14} />
           <span><span className="hide-mobile">Tasa {isManual ? 'Manual' : 'BCV'}: </span><strong>Bs. {dolarRate.toFixed(2)}</strong></span>
+          {isStale && !isManual && (
+            <span style={{ position: 'absolute', top: '-2px', right: '-2px', width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#ef4444' }} />
+          )}
         </div>
 
         {/* Network & Offline Status Indicator */}
@@ -284,9 +372,17 @@ export default function Header({
             onClick={onSync}
             disabled={syncState.isSyncing}
             title={syncState.isSyncing ? 'Sincronizando base de datos...' : 'Sincronizar base de datos'}
+            aria-label={syncState.isSyncing ? 'Sincronizando...' : 'Sincronizar datos'}
           >
             <RefreshCw size={16} className={syncState.isSyncing ? 'animate-spin' : ''} />
           </button>
+        )}
+
+        {/* Sync status indicator */}
+        {syncState.isSyncing && (
+          <span style={{ fontSize: '9px', fontWeight: 800, color: 'var(--brand-primary)', whiteSpace: 'nowrap' }}>
+            Sincronizando...
+          </span>
         )}
 
         {/* Software Update Notification Indicator */}
@@ -301,6 +397,7 @@ export default function Header({
               color: updateStatus === 'DOWNLOADED' ? '#22c55e' : 'var(--brand-gold)',
             }}
             title={updateStatus === 'DOWNLOADED' ? "¡Descarga de actualización completa! Haz clic para reiniciar y aplicar." : "¡Nueva actualización del sistema disponible! Haz clic para ver detalles."}
+            aria-label={updateStatus === 'DOWNLOADED' ? 'Actualización lista para instalar' : 'Actualización disponible'}
           >
             <ArrowUpCircle size={18} />
             {/* Pulsing Dot */}
@@ -322,6 +419,7 @@ export default function Header({
           className="theme-toggle-btn" 
           onClick={() => setIsDarkMode(!isDarkMode)}
           title={isDarkMode ? 'Cambiar a Modo Claro' : 'Cambiar a Modo Oscuro'}
+          aria-label={isDarkMode ? 'Activar modo claro' : 'Activar modo oscuro'}
         >
           {isDarkMode ? <Sun size={18} /> : <Moon size={18} />}
         </button>
@@ -338,6 +436,18 @@ export default function Header({
             <img src={avatarImg} alt={user.name} className="avatar-img" />
           </div>
 
+          {/* Email verification button */}
+          <button 
+            onClick={handleSendVerification}
+            className="theme-toggle-btn" 
+            title="Verificar correo electrónico"
+            aria-label="Verificar correo electrónico"
+            style={{ marginLeft: '4px', border: 'none', backgroundColor: 'transparent', color: 'var(--brand-primary)', position: 'relative' }}
+          >
+            {verifyMsg ? <CheckCircle size={14} /> : <Mail size={14} />}
+            {verifyMsg && <span style={{ position: 'absolute', top: '100%', left: '50%', transform: 'translateX(-50%)', fontSize: '8px', whiteSpace: 'nowrap', color: 'var(--brand-gold)', fontWeight: 700 }}>{verifyMsg}</span>}
+          </button>
+
           {/* Quick Logout Button */}
           <button 
             onClick={onLogout} 
@@ -349,12 +459,74 @@ export default function Header({
               color: 'var(--text-muted)'
             }}
             title="Cerrar Sesión"
+            aria-label="Cerrar sesión"
           >
             <LogOut size={16} style={{ color: '#ef4444' }} />
           </button>
         </div>
 
       </div>
+
+      {isMobileSearchOpen && createPortal(
+        <div 
+          className="mobile-search-overlay"
+          onClick={() => setIsMobileSearchOpen(false)}
+        >
+          <div className="mobile-search-modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="mobile-search-header">
+              <div className="mobile-search-input-wrapper">
+                <Search className="mobile-search-icon" size={18} />
+                <input
+                  type="text"
+                  placeholder="Buscar producto, cliente o nómina..."
+                  className="mobile-search-input"
+                  value={localInput}
+                  onChange={(e) => setLocalInput(e.target.value)}
+                  autoFocus
+                />
+              </div>
+              <button 
+                onClick={() => setIsMobileSearchOpen(false)}
+                className="mobile-search-close-btn"
+              >
+                Cerrar
+              </button>
+            </div>
+            
+            <div className="mobile-search-results">
+              {localInput.trim() === '' ? (
+                <div className="mobile-search-empty-state">
+                  Escribe algo para buscar en el sistema...
+                </div>
+              ) : results.length === 0 ? (
+                <div className="mobile-search-empty-state">
+                  Sin resultados para <strong>"{localInput}"</strong>
+                </div>
+              ) : (
+                results.map((res, index) => (
+                  <div
+                    key={`${res.type}-${res.id}-${index}`}
+                    onClick={() => {
+                      handleResultClick(res);
+                      setIsMobileSearchOpen(false);
+                    }}
+                    className="mobile-search-result-row"
+                  >
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '2px' }}>
+                      <span className="result-name">{res.name}</span>
+                      <span className="result-details">{res.details}</span>
+                    </div>
+                    <span className={`result-badge badge-${res.type}`}>
+                      {res.type}
+                    </span>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
     </header>
   );
 }

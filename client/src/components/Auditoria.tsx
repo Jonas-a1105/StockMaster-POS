@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { animate } from 'animejs';
 import { 
   ShieldAlert, 
@@ -14,11 +14,13 @@ import {
   Server,
   Wifi,
   ArrowRight,
-  Info
+  Info,
+  User
 } from 'lucide-react';
 import { API_URL } from '../config';
 import { getDatabase } from '../db/database';
 import { formatAuditDetailsHumanReadable } from '../utils/audit';
+import CustomSelect from './CustomSelect';
 
 interface AuditoriaProps {
   user: {
@@ -36,6 +38,7 @@ interface AuditLog {
   ipAddress: string;
   userAgent: string;
   createdAt: string;
+  severity?: string;
   user?: {
     name: string;
     email: string;
@@ -56,6 +59,16 @@ export default function Auditoria({ user }: AuditoriaProps) {
   const [filteredLogs, setFilteredLogs] = useState<AuditLog[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<'TODOS' | 'SYNC' | 'AUTH' | 'POS' | 'STOCK'>('TODOS');
+  const [severityFilter, setSeverityFilter] = useState<'TODOS' | 'INFO' | 'WARNING' | 'CRITICAL'>('TODOS');
+  const [userFilter, setUserFilter] = useState<string>('');
+
+  const uniqueUsers = useMemo(() => {
+    const emails = new Set<string>();
+    auditLogs.forEach(log => {
+      if (log.user?.email) emails.add(log.user.email);
+    });
+    return Array.from(emails);
+  }, [auditLogs]);
 
   const ITEMS_PER_PAGE = 10;
   const [currentPage, setCurrentPage] = useState(1);
@@ -63,7 +76,7 @@ export default function Auditoria({ user }: AuditoriaProps) {
   // Reset pagination on filter change
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, categoryFilter]);
+  }, [searchTerm, categoryFilter, severityFilter, userFilter]);
 
   const totalPages = Math.ceil(filteredLogs.length / ITEMS_PER_PAGE);
   const paginatedLogs = filteredLogs.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
@@ -204,6 +217,7 @@ export default function Auditoria({ user }: AuditoriaProps) {
           ipAddress: '127.0.0.1 (Local)',
           userAgent: 'RxDB Client (Local)',
           createdAt: data.createdAt,
+          severity: data.severity,
           user: localUser
         };
       });
@@ -233,6 +247,7 @@ export default function Auditoria({ user }: AuditoriaProps) {
             ipAddress: '127.0.0.1 (Local)',
             userAgent: 'RxDB Client (Local)',
             createdAt: data.createdAt,
+            severity: data.severity,
             user: localUser
           };
         });
@@ -298,8 +313,25 @@ export default function Auditoria({ user }: AuditoriaProps) {
       });
     }
 
+    if (severityFilter !== 'TODOS') {
+      result = result.filter(log => {
+        const logSeverity = log.severity || (
+          log.action.includes('ELIMINAR') || log.action.includes('BORRAR') || log.action.includes('SOBREESCRITURA')
+            ? 'CRITICAL'
+            : (log.action.includes('EDITAR') || log.action.includes('MODIFICAR') || log.action.includes('CONFLICT') || log.action.includes('CIERRE') || log.action.includes('AJUSTE'))
+              ? 'WARNING'
+              : 'INFO'
+        );
+        return logSeverity === severityFilter;
+      });
+    }
+
+    if (userFilter) {
+      result = result.filter(log => log.user?.email === userFilter);
+    }
+
     setFilteredLogs(result);
-  }, [searchTerm, categoryFilter, auditLogs]);
+  }, [searchTerm, categoryFilter, severityFilter, userFilter, auditLogs]);
 
   const handleCopyJson = (text: string) => {
     navigator.clipboard.writeText(text);
@@ -330,6 +362,9 @@ export default function Auditoria({ user }: AuditoriaProps) {
           </div>
           <span className="view-header-pill pill-teal">
             {auditLogs.length} Eventos
+          </span>
+          <span className="view-header-pill" style={{ backgroundColor: 'rgba(34, 197, 94, 0.1)', color: '#22c55e', border: '1.5px solid rgba(34, 197, 94, 0.25)', display: 'inline-flex', alignItems: 'center', gap: '4px', fontWeight: 800 }}>
+            🛡️ BITÁCORA INMUTABLE (TRIGGERS DB ACTIVOS)
           </span>
           <h3 style={{ fontSize: '15px', fontWeight: 800, color: 'var(--text-primary)', margin: 0, fontFamily: 'var(--font-main)', marginLeft: '4px' }}>
             💻 Arquitectura de Datos y Centro de Replicación
@@ -444,8 +479,47 @@ export default function Auditoria({ user }: AuditoriaProps) {
         </div>
       </div>
 
+      {/* SECCIÓN 2: ESTADÍSTICAS DE SEGURIDAD */}
+      {auditLogs.length > 0 && (
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
+          gap: '12px',
+          width: '100%'
+        }}>
+          {(() => {
+            const isFailed = (l: AuditLog) => l.action.includes('FALLIDO') || l.action.includes('BLOQUEADO');
+            const isLogin = (l: AuditLog) => l.action.includes('USUARIO_LOGIN');
+            const totalFailed = auditLogs.filter(l => isLogin(l) && isFailed(l)).length;
+            const last24h = auditLogs.filter(l => isLogin(l) && isFailed(l) && Date.now() - new Date(l.createdAt).getTime() < 24 * 60 * 60 * 1000).length;
+            const totalLogins = auditLogs.filter(l => isLogin(l)).length;
+            const successRate = totalLogins > 0 ? Math.round((totalLogins - totalFailed) / totalLogins * 100) : 100;
+            return (
+              <>
+                <div style={{ backgroundColor: totalFailed > 0 ? 'rgba(239, 68, 68, 0.08)' : 'rgba(34, 197, 94, 0.08)', border: `1.5px solid ${totalFailed > 0 ? 'rgba(239, 68, 68, 0.2)' : 'rgba(34, 197, 94, 0.2)'}`, borderRadius: '14px', padding: '14px' }}>
+                  <span style={{ fontSize: '10px', fontWeight: 800, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Intentos Fallidos</span>
+                  <div style={{ fontSize: '24px', fontWeight: 900, color: totalFailed > 0 ? '#ef4444' : '#22c55e', marginTop: '4px' }}>{totalFailed}</div>
+                </div>
+                <div style={{ backgroundColor: last24h > 0 ? 'rgba(239, 68, 68, 0.08)' : 'rgba(34,197,94,0.08)', border: `1.5px solid ${last24h > 0 ? 'rgba(239,68,68,0.2)' : 'rgba(34,197,94,0.2)'}`, borderRadius: '14px', padding: '14px' }}>
+                  <span style={{ fontSize: '10px', fontWeight: 800, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Fallos (24h)</span>
+                  <div style={{ fontSize: '24px', fontWeight: 900, color: last24h > 0 ? '#ef4444' : '#22c55e', marginTop: '4px' }}>{last24h}</div>
+                </div>
+                <div style={{ backgroundColor: 'rgba(59,130,246,0.08)', border: '1.5px solid rgba(59,130,246,0.2)', borderRadius: '14px', padding: '14px' }}>
+                  <span style={{ fontSize: '10px', fontWeight: 800, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Tasa de Éxito</span>
+                  <div style={{ fontSize: '24px', fontWeight: 900, color: successRate >= 90 ? '#22c55e' : successRate >= 70 ? '#eab308' : '#ef4444', marginTop: '4px' }}>{successRate}%</div>
+                </div>
+                <div style={{ backgroundColor: 'rgba(139,92,246,0.08)', border: '1.5px solid rgba(139,92,246,0.2)', borderRadius: '14px', padding: '14px' }}>
+                  <span style={{ fontSize: '10px', fontWeight: 800, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Total Intentos</span>
+                  <div style={{ fontSize: '24px', fontWeight: 900, color: 'var(--text-primary)', marginTop: '4px' }}>{totalLogins}</div>
+                </div>
+              </>
+            );
+          })()}
+        </div>
+      )}
+
       {/* SECCIÓN 3: BUSCADOR Y CHIPS DE FILTRADO TÉCNICO */}
-      <div style={{ width: '100%' }}>
+      <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '12px' }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '16px' }}>
           
           {/* Controles de Búsqueda */}
@@ -514,6 +588,62 @@ export default function Auditoria({ user }: AuditoriaProps) {
           </div>
 
         </div>
+
+        {/* FILTROS ADICIONALES DE GRAVEDAD Y USUARIO */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px', alignItems: 'center', backgroundColor: 'var(--bg-card)', padding: '12px 18px', borderRadius: '16px', border: '1.5px solid var(--border-color)' }}>
+          {/* Filtro de Gravedad */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '11px', fontWeight: 800, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>
+              Gravedad:
+            </span>
+            <div style={{ display: 'flex', gap: '4px', backgroundColor: 'var(--bg-primary)', padding: '3px', borderRadius: 'var(--button-radius)', border: '1px solid var(--border-color)' }}>
+              {([
+                { id: 'TODOS', label: 'Todos' },
+                { id: 'INFO', label: 'Baja (Info)' },
+                { id: 'WARNING', label: 'Media (Aviso)' },
+                { id: 'CRITICAL', label: 'Alta (Crítico)' }
+              ] as const).map(g => (
+                <button
+                  key={g.id}
+                  onClick={() => setSeverityFilter(g.id)}
+                  type="button"
+                  style={{
+                    padding: '5px 12px',
+                    borderRadius: 'calc(var(--button-radius) - 4px)',
+                    border: 'none',
+                    backgroundColor: severityFilter === g.id 
+                      ? (g.id === 'CRITICAL' ? '#ef4444' : g.id === 'WARNING' ? 'var(--brand-gold, #fbbf24)' : 'var(--brand-primary)')
+                      : 'transparent',
+                    color: severityFilter === g.id ? '#fff' : 'var(--text-secondary)',
+                    fontWeight: 700,
+                    fontSize: '10px',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease'
+                  }}
+                >
+                  {g.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Filtro de Usuario */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: 'auto' }}>
+            <span style={{ fontSize: '11px', fontWeight: 800, color: 'var(--text-secondary)', textTransform: 'uppercase' }}>
+              Filtrar por Usuario:
+            </span>
+            <CustomSelect
+              value={userFilter}
+              onChange={(val) => setUserFilter(val)}
+              options={[
+                { value: '', label: 'Todos los usuarios' },
+                ...uniqueUsers.map(email => ({ value: email, label: email }))
+              ]}
+              icon={<User size={14} style={{ color: 'var(--brand-primary)' }} />}
+              style={{ width: '220px' }}
+            />
+          </div>
+        </div>
       </div>
 
       {/* SECCIÓN 4: TABLA DE EVENTOS DE AUDITORÍA */}
@@ -550,17 +680,26 @@ export default function Auditoria({ user }: AuditoriaProps) {
                 </tr>
               ) : (
                 paginatedLogs.map((log) => {
+                  const logSeverity = log.severity || (
+                    log.action.includes('ELIMINAR') || log.action.includes('BORRAR') || log.action.includes('SOBREESCRITURA')
+                      ? 'CRITICAL'
+                      : (log.action.includes('EDITAR') || log.action.includes('MODIFICAR') || log.action.includes('CONFLICT') || log.action.includes('CIERRE') || log.action.includes('AJUSTE'))
+                        ? 'WARNING'
+                        : 'INFO'
+                  );
+
                   let badgeBg = 'rgba(14, 165, 164, 0.1)';
-                  let badgeColor = 'var(--brand-primary)';
-                  if (log.action.startsWith('SYNC_')) {
-                    badgeBg = 'rgba(251, 191, 36, 0.1)';
-                    badgeColor = 'var(--brand-gold)';
-                  } else if (log.action.includes('ALERTA') || log.action.includes('SOBREESCRITURA')) {
+                  let badgeColor = 'var(--brand-teal, #0ea5a4)';
+                  let severityLabel = 'ℹ️ BAJA';
+                  
+                  if (logSeverity === 'CRITICAL') {
                     badgeBg = 'rgba(239, 68, 68, 0.1)';
                     badgeColor = '#ef4444';
-                  } else if (log.action.includes('LOGIN')) {
-                    badgeBg = 'rgba(34, 197, 94, 0.1)';
-                    badgeColor = '#22c55e';
+                    severityLabel = '🚨 CRÍTICA';
+                  } else if (logSeverity === 'WARNING') {
+                    badgeBg = 'rgba(251, 191, 36, 0.1)';
+                    badgeColor = 'var(--brand-gold, #fbbf24)';
+                    severityLabel = '⚠️ MEDIA';
                   }
 
                   return (
@@ -577,19 +716,32 @@ export default function Auditoria({ user }: AuditoriaProps) {
                       </td>
                       <td style={{ padding: '12px 8px' }}>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                          <span style={{ 
-                            fontSize: '10px', 
-                            fontWeight: 800, 
-                            color: badgeColor, 
-                            backgroundColor: badgeBg, 
-                            padding: '3px 8px', 
-                            borderRadius: '50px',
-                            display: 'inline-block',
-                            letterSpacing: '0.3px',
-                            width: 'fit-content'
-                          }}>
-                            {log.action}
-                          </span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span style={{ 
+                              fontSize: '10px', 
+                              fontWeight: 800, 
+                              color: badgeColor, 
+                              backgroundColor: badgeBg, 
+                              padding: '3px 8px', 
+                              borderRadius: '50px',
+                              display: 'inline-block',
+                              letterSpacing: '0.3px',
+                              width: 'fit-content'
+                            }}>
+                              {log.action}
+                            </span>
+                            <span style={{ 
+                              fontSize: '8.5px', 
+                              fontWeight: 900, 
+                              color: badgeColor, 
+                              backgroundColor: badgeBg, 
+                              padding: '2px 6px', 
+                              borderRadius: '4px',
+                              letterSpacing: '0.5px'
+                            }}>
+                              {severityLabel}
+                            </span>
+                          </div>
                           <span style={{ fontSize: '12px', color: 'var(--text-primary)', fontWeight: 600 }}>
                             {formatAuditDetailsHumanReadable(log)}
                           </span>

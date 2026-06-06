@@ -8,13 +8,23 @@ import {
   RefreshCw, 
   Layers, 
   Award,
-  Info
+  Info,
+  Snowflake,
+  FileSpreadsheet,
+  FileText,
+  Sparkles,
+  Clock
 } from 'lucide-react';
 import { useExchangeRate } from '../contexts/ExchangeRateContext';
 import { useToast } from './ToastNotification';
 import { useTheme } from '../contexts/ThemeContext';
 import { API_URL } from '../config';
 import CustomDatePicker from './CustomDatePicker';
+import CustomSelect from './CustomSelect';
+import { getDatabase } from '../db/database';
+import * as XLSX from 'xlsx';
+import { jsPDF } from 'jspdf';
+import 'jspdf-autotable';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -51,6 +61,8 @@ interface AnaliticasProps {
 interface KPIs {
   totalRevenue: number;
   totalCost: number;
+  totalPayroll?: number;
+  totalExpenses?: number;
   netProfit: number;
   transactionsCount: number;
   inventoryCostValue: number;
@@ -77,6 +89,18 @@ interface StarProduct {
   roi: number;
 }
 
+interface ColdProduct {
+  id: string;
+  code: string;
+  name: string;
+  category: string;
+  price: number;
+  cost: number;
+  stock: number;
+  createdAt: string;
+  lastSaleDate: string | null;
+}
+
 export default function Analiticas({ user }: AnaliticasProps) {
   const { convertToVES, formatVES, formatUSD } = useExchangeRate();
   const { addToast } = useToast();
@@ -91,6 +115,8 @@ export default function Analiticas({ user }: AnaliticasProps) {
   const [kpis, setKpis] = useState<KPIs>({
     totalRevenue: 0,
     totalCost: 0,
+    totalPayroll: 0,
+    totalExpenses: 0,
     netProfit: 0,
     transactionsCount: 0,
     inventoryCostValue: 0,
@@ -99,12 +125,17 @@ export default function Analiticas({ user }: AnaliticasProps) {
   });
 
   const [categorySales, setCategorySales] = useState<CategorySales[]>([]);
-
   const [starProducts, setStarProducts] = useState<StarProduct[]>([]);
+  const [weeklyPerformance, setWeeklyPerformance] = useState<any[]>([]);
 
-  const [weeklyPerformance, setWeeklyPerformance] = useState<Array<{label: string; totalRevenue: number; totalCost: number}>>([]);
+  // Estados para productos fríos y modal de exportación
+  const [coldProducts, setColdProducts] = useState<ColdProduct[]>([]);
+  const [coldDays, setColdDays] = useState<number>(30);
+  const [showExportModal, setShowExportModal] = useState<boolean>(false);
+  const [showPromoModal, setShowPromoModal] = useState<ColdProduct | null>(null);
+  const [promoDiscount, setPromoDiscount] = useState<string>('15');
 
-  // Carga analíticas del servidor central
+  // Carga analíticas del servidor central o local offline
   const loadAnalytics = async () => {
     setIsRefreshing(true);
     try {
@@ -117,7 +148,6 @@ export default function Analiticas({ user }: AnaliticasProps) {
         if (kpiRes.ok) {
           const data = await kpiRes.json();
           if (data.kpis) {
-            // Adapta al estado
             setKpis(data.kpis);
           }
         }
@@ -154,9 +184,186 @@ export default function Analiticas({ user }: AnaliticasProps) {
             setWeeklyPerformance(data);
           }
         }
+
+        // Carga productos fríos
+        const coldRes = await fetch(`${API_URL}/reports/cold-products?days=${coldDays}`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (coldRes.ok) {
+          const data = await coldRes.json();
+          if (Array.isArray(data)) {
+            setColdProducts(data);
+          }
+        }
+      } else {
+        // Fallback offline resiliente con RxDB local
+        const db = await getDatabase();
+        const sales = await db.sales.find().exec();
+        const products = await db.products.find().exec();
+        const payrolls = await db.payroll.find().exec();
+        const expenses = await db.expenses.find().exec();
+
+        const productCostMap = new Map(products.map(p => [p.id, p.cost]));
+        const productCategoryMap = new Map(products.map(p => [p.id, p.category]));
+        const productMap = new Map(products.map(p => [p.id, p]));
+
+        // Calcular KPIs
+        const totalRevenue = sales.reduce((sum, s) => sum + s.total, 0);
+        const transactionsCount = sales.length;
+
+        let totalCost = 0;
+        for (const s of sales) {
+          for (const item of s.items) {
+            const cost = productCostMap.get(item.productId) || 0;
+            totalCost += item.quantity * cost;
+          }
+        }
+
+        const totalPayroll = payrolls
+          .filter(p => p.status === 'PAGADO')
+          .reduce((sum, p) => sum + p.totalPaid, 0);
+
+        const totalExpenses = expenses.reduce((sum, e) => sum + e.amount, 0);
+        const netProfit = totalRevenue - totalCost - totalPayroll - totalExpenses;
+
+        const inventoryCostValue = products.reduce((sum, p) => sum + p.cost * p.stock, 0);
+        const inventoryRetailValue = products.reduce((sum, p) => sum + p.price * p.stock, 0);
+        const lowStockCount = products.filter(p => p.stock <= p.minStock).length;
+
+        setKpis({
+          totalRevenue,
+          totalCost,
+          totalPayroll,
+          totalExpenses,
+          netProfit,
+          transactionsCount,
+          inventoryCostValue,
+          inventoryRetailValue,
+          lowStockProductsCount: lowStockCount
+        });
+
+        // Categorías
+        const catMap = new Map<string, { quantitySold: number; totalRevenue: number }>();
+        for (const s of sales) {
+          for (const item of s.items) {
+            const cat = productCategoryMap.get(item.productId) || 'General';
+            const prev = catMap.get(cat) || { quantitySold: 0, totalRevenue: 0 };
+            prev.quantitySold += item.quantity;
+            prev.totalRevenue += item.price * item.quantity;
+            catMap.set(cat, prev);
+          }
+        }
+        setCategorySales(Array.from(catMap.entries()).map(([category, data]) => ({
+          category,
+          quantitySold: data.quantitySold,
+          totalRevenue: data.totalRevenue
+        })));
+
+        // Productos estrella
+        const starMap = new Map<string, any>();
+        for (const s of sales) {
+          for (const item of s.items) {
+            const p = productMap.get(item.productId);
+            if (!p) continue;
+            const prev = starMap.get(p.id) || {
+              id: p.id, name: p.name, sku: p.code, category: p.category,
+              unitsSold: 0, retailPrice: p.price, costPrice: p.cost,
+              totalRevenue: 0, netMargin: 0, roi: 0
+            };
+            prev.unitsSold += item.quantity;
+            prev.totalRevenue += item.price * item.quantity;
+            starMap.set(p.id, prev);
+          }
+        }
+        const stars = Array.from(starMap.values()).map(p => {
+          const cost = p.unitsSold * p.costPrice;
+          p.netMargin = p.totalRevenue - cost;
+          p.roi = cost > 0 ? Math.round((p.netMargin / cost) * 100) : 0;
+          return p;
+        }).sort((a, b) => b.totalRevenue - a.totalRevenue).slice(0, 10);
+        setStarProducts(stars);
+
+        // Rendimiento semanal
+        const nowTime = Date.now();
+        const fourWeeksAgo = nowTime - 28 * 24 * 60 * 60 * 1000;
+        const buckets = [];
+        const msPerWeek = 7 * 24 * 60 * 60 * 1000;
+        for (let w = 0; w < 4; w++) {
+          const wStart = fourWeeksAgo + w * msPerWeek;
+          const wEnd = wStart + msPerWeek;
+          let rev = 0;
+          let costVal = 0;
+          for (const s of sales) {
+            const t = new Date(s.createdAt).getTime();
+            if (t >= wStart && t < wEnd) {
+              rev += s.total;
+              for (const item of s.items) {
+                costVal += item.quantity * (productCostMap.get(item.productId) || 0);
+              }
+            }
+          }
+          let payVal = 0;
+          for (const p of payrolls) {
+            const t = new Date(p.paymentDate).getTime();
+            if (p.status === 'PAGADO' && t >= wStart && t < wEnd) {
+              payVal += p.totalPaid;
+            }
+          }
+          let expVal = 0;
+          for (const e of expenses) {
+            const t = new Date(e.date).getTime();
+            if (t >= wStart && t < wEnd) {
+              expVal += e.amount;
+            }
+          }
+          buckets.push({
+            label: `SEMANA ${w + 1}`,
+            totalRevenue: rev,
+            totalCost: costVal,
+            totalPayroll: payVal,
+            totalExpenses: expVal,
+            netUtility: rev - costVal - payVal - expVal
+          });
+        }
+        setWeeklyPerformance(buckets);
+
+        // Productos fríos
+        const threshold = nowTime - coldDays * 24 * 60 * 60 * 1000;
+        const recentSaleProductIds = new Set<string>();
+        for (const s of sales) {
+          if (new Date(s.createdAt).getTime() >= threshold) {
+            for (const item of s.items) {
+              recentSaleProductIds.add(item.productId);
+            }
+          }
+        }
+        const coldProds = products.filter(p => {
+          const createdTime = new Date(p.updatedAt).getTime();
+          return createdTime <= threshold && p.stock > 0 && !recentSaleProductIds.has(p.id);
+        }).map(p => {
+          let lastSaleTime = 0;
+          for (const s of sales) {
+            if (s.items.some(item => item.productId === p.id)) {
+              const t = new Date(s.createdAt).getTime();
+              if (t > lastSaleTime) lastSaleTime = t;
+            }
+          }
+          return {
+            id: p.id,
+            code: p.code,
+            name: p.name,
+            category: p.category,
+            price: p.price,
+            cost: p.cost,
+            stock: p.stock,
+            createdAt: p.updatedAt,
+            lastSaleDate: lastSaleTime > 0 ? new Date(lastSaleTime).toISOString() : null
+          };
+        }).slice(0, 50);
+        setColdProducts(coldProds);
       }
     } catch (err) {
-      console.error('Error cargando analíticas de servidor:', err);
+      console.error('Error cargando analíticas:', err);
     } finally {
       setTimeout(() => setIsRefreshing(false), 600);
     }
@@ -164,7 +371,7 @@ export default function Analiticas({ user }: AnaliticasProps) {
 
   useEffect(() => {
     loadAnalytics();
-  }, [period]);
+  }, [period, coldDays]);
 
   // Operaciones Financieras Específicas de Reportes (COGS, ROI, Ticket Promedio)
   const totalRevenue = kpis.totalRevenue;
@@ -177,7 +384,7 @@ export default function Analiticas({ user }: AnaliticasProps) {
   const profitMarginPercentage = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
   const roiPercentage = cogs > 0 ? (netProfit / cogs) * 100 : 0;
 
-  // Preparar datos para react-chartjs-2
+  // Preparar datos para react-chartjs-2 con las 4 curvas correspondientes
   const performanceChartData = useMemo(() => {
     const labels = weeklyPerformance && weeklyPerformance.length > 0
       ? weeklyPerformance.map(d => d.label.toUpperCase())
@@ -191,27 +398,34 @@ export default function Analiticas({ user }: AnaliticasProps) {
       ? weeklyPerformance.map(d => d.totalCost)
       : [0, 0, 0, 0];
 
+    const expensesData = weeklyPerformance && weeklyPerformance.length > 0
+      ? weeklyPerformance.map(d => (d.totalPayroll || 0) + (d.totalExpenses || 0))
+      : [0, 0, 0, 0];
+
+    const netUtilityData = weeklyPerformance && weeklyPerformance.length > 0
+      ? weeklyPerformance.map(d => d.netUtility !== undefined ? d.netUtility : (d.totalRevenue - d.totalCost))
+      : [0, 0, 0, 0];
+
     return {
       labels,
       datasets: [
         {
           label: 'INGRESOS BRUTOS',
           data: revenueData,
-          borderColor: '#3b82f6', // var(--brand-primary) equivalent blue
-          borderWidth: 3.5,
+          borderColor: '#3b82f6',
+          borderWidth: 3,
           tension: 0.4,
           pointRadius: 3,
           pointHoverRadius: 6,
           pointHoverBackgroundColor: '#3b82f6',
           pointHoverBorderColor: '#ffffff',
           pointHoverBorderWidth: 2,
-          fill: true,
-          backgroundColor: 'rgba(59, 130, 246, 0.15)',
+          fill: false,
         },
         {
           label: 'COSTO DE VENTAS (COGS)',
           data: costData,
-          borderColor: '#f59e0b', // var(--brand-gold) equivalent gold
+          borderColor: '#f59e0b',
           borderWidth: 2.5,
           tension: 0.4,
           pointRadius: 3,
@@ -219,8 +433,34 @@ export default function Analiticas({ user }: AnaliticasProps) {
           pointHoverBackgroundColor: '#f59e0b',
           pointHoverBorderColor: '#ffffff',
           pointHoverBorderWidth: 2,
+          fill: false,
+        },
+        {
+          label: 'NÓMINA + GASTOS',
+          data: expensesData,
+          borderColor: '#ef4444',
+          borderWidth: 2.5,
+          tension: 0.4,
+          pointRadius: 3,
+          pointHoverRadius: 6,
+          pointHoverBackgroundColor: '#ef4444',
+          pointHoverBorderColor: '#ffffff',
+          pointHoverBorderWidth: 2,
+          fill: false,
+        },
+        {
+          label: 'UTILIDAD NETA REAL',
+          data: netUtilityData,
+          borderColor: '#0ea5a4',
+          borderWidth: 4,
+          tension: 0.4,
+          pointRadius: 4,
+          pointHoverRadius: 7,
+          pointHoverBackgroundColor: '#0ea5a4',
+          pointHoverBorderColor: '#ffffff',
+          pointHoverBorderWidth: 2.5,
           fill: true,
-          backgroundColor: 'rgba(245, 158, 11, 0.08)',
+          backgroundColor: 'rgba(14, 165, 164, 0.12)',
         }
       ]
     };
@@ -232,7 +472,7 @@ export default function Analiticas({ user }: AnaliticasProps) {
       maintainAspectRatio: false,
       plugins: {
         legend: {
-          display: false, // Leyendas hechas a mano arriba del gráfico
+          display: false,
         },
         tooltip: {
           backgroundColor: isDarkMode ? '#ffffff' : '#121214',
@@ -288,7 +528,7 @@ export default function Analiticas({ user }: AnaliticasProps) {
             }
           },
           grid: {
-            color: isDarkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)',
+color: isDarkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)',
           }
         }
       }
@@ -296,49 +536,237 @@ export default function Analiticas({ user }: AnaliticasProps) {
   }, [isDarkMode]);
 
   // Acciones de Exportación Reales
-  const handleExportCSV = () => {
-    // Generate CSV data for financial metrics, categories, and products
-    let csv = '\uFEFF'; // UTF-8 BOM
-    csv += 'REPORTE FINANCIERO Y DE VENTAS - STOCKMASTER PRO\n';
-    csv += `Periodo: ${period.toUpperCase()}\n`;
-    csv += `Fecha de Generacion: ${new Date().toLocaleString('es-VE')}\n\n`;
-    
-    csv += 'BALANCES FINANCIEROS (USD)\n';
-    csv += `Ingresos Totales,${totalRevenue.toFixed(2)}\n`;
-    csv += `Costo de Ventas (COGS),${totalCost.toFixed(2)}\n`;
-    csv += `Utilidad Neta,${netProfit.toFixed(2)}\n`;
-    csv += `Margen de Utilidad,${profitMarginPercentage.toFixed(1)}%\n`;
-    csv += `ROI (Retorno de Inversion),${roiPercentage.toFixed(1)}%\n`;
-    csv += `Transacciones totales,${transactionsCount}\n`;
-    csv += `Ticket Promedio,${averageTicket.toFixed(2)}\n\n`;
+  const handleExportExcel = () => {
+    // Hoja 1: Resumen KPIs
+    const kpisData: any[][] = [
+      ['KPI', 'Monto (USD)', 'Equivalente (VES)'],
+      ['Ingresos Brutos', kpis.totalRevenue, convertToVES(kpis.totalRevenue)],
+      ['Costo de Ventas (COGS)', kpis.totalCost, convertToVES(kpis.totalCost)],
+      ['Gastos de Nómina', kpis.totalPayroll || 0, convertToVES(kpis.totalPayroll || 0)],
+      ['Gastos Operativos', kpis.totalExpenses || 0, convertToVES(kpis.totalExpenses || 0)],
+      ['Utilidad Neta Real', kpis.netProfit, convertToVES(kpis.netProfit)],
+      ['ROI (Retorno de Inversión)', `${roiPercentage.toFixed(1)}%`, ''],
+      ['Total Transacciones', kpis.transactionsCount, ''],
+      ['Ticket Promedio', averageTicket, convertToVES(averageTicket)],
+      ['Valor Inventario (Costo)', kpis.inventoryCostValue, convertToVES(kpis.inventoryCostValue)],
+      ['Valor Inventario (Venta)', kpis.inventoryRetailValue, convertToVES(kpis.inventoryRetailValue)]
+    ];
+    const kpisWS = XLSX.utils.aoa_to_sheet(kpisData);
 
-    csv += 'VENTAS POR CATEGORÍA\n';
-    csv += 'Categoria,Cantidad Vendida,Ingresos Totales (USD)\n';
+    // Hoja 2: Ventas por Categoría
+    const catData: any[][] = [['Categoría', 'Cantidad Vendida', 'Ingresos Totales (USD)', 'Equivalente (VES)']];
     categorySales.forEach(c => {
-      csv += `"${c.category}",${c.quantitySold},${c.totalRevenue.toFixed(2)}\n`;
+      catData.push([c.category, c.quantitySold, c.totalRevenue, convertToVES(c.totalRevenue)]);
     });
-    csv += '\n';
+    const catWS = XLSX.utils.aoa_to_sheet(catData);
 
-    csv += 'PRODUCTOS ESTRELLA (TOP MÁS VENDIDOS)\n';
-    csv += 'SKU,Nombre,Categoria,Unidades Vendidas,Precio Venta (USD),Costo Unitario (USD),Ingresos Totales (USD),Margen Neto (USD),ROI (%)\n';
+    // Hoja 3: Productos Estrella
+    const starData: any[][] = [['SKU', 'Producto', 'Categoría', 'Unidades Vendidas', 'Precio Venta (USD)', 'Costo Unitario (USD)', 'Ingresos Totales (USD)', 'Ganancia Neta (USD)', 'ROI']];
     starProducts.forEach(p => {
-      csv += `${p.sku},"${p.name}","${p.category}",${p.unitsSold},${p.retailPrice.toFixed(2)},${p.costPrice.toFixed(2)},${p.totalRevenue.toFixed(2)},${p.netMargin.toFixed(2)},${p.roi}%\n`;
+      starData.push([p.sku, p.name, p.category, p.unitsSold, p.retailPrice, p.costPrice, p.totalRevenue, p.netMargin, `${p.roi}%`]);
     });
+    const starWS = XLSX.utils.aoa_to_sheet(starData);
 
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.setAttribute('href', url);
-    link.setAttribute('download', `reporte_financiero_${period}_${new Date().toISOString().split('T')[0]}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    // Hoja 4: Productos Sin Rotación (Fríos)
+    const coldData: any[][] = [['SKU', 'Producto', 'Categoría', 'Stock Actual', 'Precio Venta', 'Costo Unitario', 'Valor Inventario (Venta)', 'Última Venta']];
+    coldProducts.forEach(p => {
+      coldData.push([
+        p.code,
+        p.name,
+        p.category,
+        p.stock,
+        p.price,
+        p.cost,
+        p.stock * p.price,
+        p.lastSaleDate ? new Date(p.lastSaleDate).toLocaleDateString('es-VE') : 'Nunca vendido'
+      ]);
+    });
+    const coldWS = XLSX.utils.aoa_to_sheet(coldData);
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, kpisWS, 'Resumen KPIs');
+    XLSX.utils.book_append_sheet(wb, catWS, 'Ventas por Categoría');
+    XLSX.utils.book_append_sheet(wb, starWS, 'Productos Estrella');
+    XLSX.utils.book_append_sheet(wb, coldWS, 'Productos Sin Rotación');
+
+    XLSX.writeFile(wb, `informe_financiero_completo_${new Date().toISOString().split('T')[0]}.xlsx`);
 
     addToast({
       type: 'success',
-      title: 'Reporte Exportado',
-      message: `El archivo CSV para el periodo "${period}" se descargó exitosamente.`
+      title: 'Excel Descargado',
+      message: 'El archivo Excel multi-hoja se ha generado y descargado exitosamente.'
     });
+    setShowExportModal(false);
+  };
+
+  const handleExportPDF = () => {
+    const doc = new jsPDF();
+    const dateStr = new Date().toLocaleString('es-VE');
+
+    // Cabecera del negocio
+    doc.setFillColor(14, 165, 164); // brand-teal
+    doc.rect(0, 0, 210, 40, 'F');
+
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(22);
+    doc.text('STOCKMASTER PRO - POS', 15, 18);
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    doc.text('Sistema Inteligente de Control de Inventario y Ventas', 15, 25);
+    doc.text(`Generado por: ${user.name} | Fecha: ${dateStr}`, 15, 32);
+
+    // Titulo del reporte
+    doc.setTextColor(18, 18, 20);
+    doc.setFontSize(16);
+    doc.setFont('helvetica', 'bold');
+    doc.text('INFORME GENERAL FINANCIERO Y DE ROTACIÓN', 15, 52);
+
+    // KPIs en Tabla
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'normal');
+    doc.text('1. Resumen de Indicadores Clave (KPIs)', 15, 60);
+
+    const kpiRows = [
+      ['Ingresos Brutos', `$${kpis.totalRevenue.toFixed(2)}`, `Bs. ${convertToVES(kpis.totalRevenue).toLocaleString('es-VE', { maximumFractionDigits: 2 })}`],
+      ['Costo de Ventas (COGS)', `$${kpis.totalCost.toFixed(2)}`, `Bs. ${convertToVES(kpis.totalCost).toLocaleString('es-VE', { maximumFractionDigits: 2 })}`],
+      ['Gastos de Nómina', `$${(kpis.totalPayroll || 0).toFixed(2)}`, `Bs. ${convertToVES(kpis.totalPayroll || 0).toLocaleString('es-VE', { maximumFractionDigits: 2 })}`],
+      ['Gastos Operativos', `$${(kpis.totalExpenses || 0).toFixed(2)}`, `Bs. ${convertToVES(kpis.totalExpenses || 0).toLocaleString('es-VE', { maximumFractionDigits: 2 })}`],
+      ['Utilidad Neta Real', `$${kpis.netProfit.toFixed(2)}`, `Bs. ${convertToVES(kpis.netProfit).toLocaleString('es-VE', { maximumFractionDigits: 2 })}`],
+      ['ROI (Retorno de Inversión)', `${roiPercentage.toFixed(1)}%`, 'N/A'],
+      ['Ticket Promedio', `$${averageTicket.toFixed(2)}`, `Bs. ${convertToVES(averageTicket).toLocaleString('es-VE', { maximumFractionDigits: 2 })}`],
+      ['Valor Inventario (Costo)', `$${kpis.inventoryCostValue.toFixed(2)}`, `Bs. ${convertToVES(kpis.inventoryCostValue).toLocaleString('es-VE', { maximumFractionDigits: 2 })}`]
+    ];
+
+    (doc as any).autoTable({
+      startY: 64,
+      head: [['Métrica Financiera', 'Monto USD', 'Equivalente VES']],
+      body: kpiRows,
+      theme: 'striped',
+      headStyles: { fillColor: [14, 165, 164] },
+      styles: { fontSize: 9 }
+    });
+
+    // Productos Estrella
+    doc.setFontSize(11);
+    doc.text('2. Productos Estrella (Mayor Margen de Utilidad)', 15, (doc as any).lastAutoTable.finalY + 12);
+
+    const starRows = starProducts.slice(0, 5).map(p => [
+      p.sku,
+      p.name,
+      p.category,
+      p.unitsSold.toString(),
+      `$${p.retailPrice.toFixed(2)}`,
+      `$${p.totalRevenue.toFixed(2)}`,
+      `$${p.netMargin.toFixed(2)}`,
+      `${p.roi}%`
+    ]);
+
+    (doc as any).autoTable({
+      startY: (doc as any).lastAutoTable.finalY + 16,
+      head: [['SKU', 'Producto', 'Categoría', 'Cant.', 'Precio', 'Venta Tot.', 'Margen', 'ROI']],
+      body: starRows,
+      theme: 'grid',
+      headStyles: { fillColor: [251, 191, 36], textColor: [18, 18, 20] }, // brand-gold
+      styles: { fontSize: 8.5 }
+    });
+
+    // Productos Fríos
+    doc.addPage();
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(14);
+    doc.text('INFORME GENERAL FINANCIERO Y DE ROTACIÓN (Cont.)', 15, 20);
+    
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'normal');
+    doc.text('3. Alerta de Productos Fríos (Sin Rotación en Inventario)', 15, 28);
+
+    const coldRows = coldProducts.slice(0, 15).map(p => [
+      p.code,
+      p.name,
+      p.category,
+      p.stock.toString(),
+      `$${p.price.toFixed(2)}`,
+      `$${(p.stock * p.price).toFixed(2)}`,
+      p.lastSaleDate ? new Date(p.lastSaleDate).toLocaleDateString('es-VE') : 'Nunca vendido'
+    ]);
+
+    (doc as any).autoTable({
+      startY: 32,
+      head: [['Código', 'Producto', 'Categoría', 'Stock', 'Precio', 'Valor Inventario', 'Última Venta']],
+      body: coldRows,
+      theme: 'striped',
+      headStyles: { fillColor: [239, 68, 68] },
+      styles: { fontSize: 8.5 }
+    });
+
+    doc.save(`informe_financiero_completo_${new Date().toISOString().split('T')[0]}.pdf`);
+
+    addToast({
+      type: 'success',
+      title: 'PDF Descargado',
+      message: 'El informe general en formato PDF se ha generado y descargado exitosamente.'
+    });
+    setShowExportModal(false);
+  };
+
+  const handleApplyPromoDiscount = async () => {
+    if (!showPromoModal) return;
+    const discountVal = Number(promoDiscount);
+    if (isNaN(discountVal) || discountVal <= 0 || discountVal > 100) {
+      addToast({
+        type: 'error',
+        title: 'Descuento Inválido',
+        message: 'Por favor, ingrese un porcentaje de descuento válido entre 1 y 100.'
+      });
+      return;
+    }
+
+    try {
+      const db = await getDatabase();
+      const doc = await db.products.findOne({ selector: { id: showPromoModal.id } }).exec();
+      if (doc) {
+        const oldPrice = doc.get('price');
+        const newPrice = Number((oldPrice * (1 - discountVal / 100)).toFixed(2));
+
+        await doc.patch({
+          price: newPrice,
+          version: (doc.get('version') || 1) + 1,
+          updatedAt: new Date().toISOString()
+        });
+
+        // Registrar evento de auditoría
+        const { logAuditEvent } = await import('../utils/audit');
+        await logAuditEvent(user, 'PRODUCTO_EDITAR', {
+          productId: showPromoModal.id,
+          code: showPromoModal.code,
+          name: showPromoModal.name,
+          detail: `Promoción aplicada (${discountVal}% de descuento). Precio anterior: $${oldPrice} -> Nuevo precio: $${newPrice}`
+        });
+
+        addToast({
+          type: 'success',
+          title: 'Promoción Aplicada',
+          message: `Se aplicó un ${discountVal}% de descuento a "${showPromoModal.name}". Nuevo precio: $${newPrice}.`
+        });
+
+        // Recargar analíticas
+        loadAnalytics();
+
+        // Disparar sincronización
+        const { syncWorker } = await import('../db/sync');
+        syncWorker.sync();
+
+        setShowPromoModal(null);
+      }
+    } catch (err) {
+      console.error(err);
+      addToast({
+        type: 'error',
+        title: 'Error de Promoción',
+        message: 'No se pudo aplicar la promoción al producto en la base de datos local.'
+      });
+    }
   };
 
   const handlePrintReport = () => {
@@ -410,13 +838,13 @@ export default function Analiticas({ user }: AnaliticasProps) {
             {/* Acciones de exportación */}
             <div style={{ display: 'flex', gap: '6px' }}>
               <button 
-                onClick={handleExportCSV}
-                className="btn-pill-dark" 
-                title="Exportar CSV"
-                style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 12px', borderRadius: 'var(--button-radius)', fontSize: '11px', fontWeight: 800, backgroundColor: 'var(--bg-input)' }}
+                onClick={() => setShowExportModal(true)}
+                className="btn-yellow" 
+                title="Exportar Informe"
+                style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', borderRadius: 'var(--button-radius)', fontSize: '11px', fontWeight: 800 }}
               >
                 <Download size={13} />
-                <span>CSV</span>
+                <span>Exportar</span>
               </button>
               <button 
                 onClick={handlePrintReport}
@@ -532,18 +960,26 @@ export default function Analiticas({ user }: AnaliticasProps) {
       {/* SECCIÓN 3: RENDIMIENTO EN TIEMPO REAL (CHARTS & CATEGORIES) */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: '28px' }}>
         
-        {/* Curvas SVG Financieras: Ingresos vs Costo de Ventas */}
+        {/* Curvas SVG Financieras: Ingresos vs Costos y Gastos con Utilidad Neta Real */}
         <div className="widget" style={{ padding: '24px', borderRadius: 'var(--card-radius)', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: '14.5px', fontWeight: 800, color: 'var(--text-primary)' }}>Rendimiento Financiero: Ingresos vs. Costos</span>
-            <div style={{ display: 'flex', gap: '12px', fontSize: '10px', fontWeight: 800 }}>
-              <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--brand-primary)' }}>
-                <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--brand-primary)' }} />
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+            <span style={{ fontSize: '14.5px', fontWeight: 800, color: 'var(--text-primary)' }}>Curva Financiera de Rendimiento y Utilidad Real</span>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', fontSize: '10px', fontWeight: 800 }}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#3b82f6' }}>
+                <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#3b82f6' }} />
                 INGRESOS BRUTOS
               </span>
               <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--brand-gold)' }}>
                 <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--brand-gold)' }} />
                 COSTO DE VENTAS (COGS)
+              </span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#ef4444' }}>
+                <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#ef4444' }} />
+                NÓMINA + GASTOS
+              </span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#0ea5a4' }}>
+                <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#0ea5a4' }} />
+                UTILIDAD NETA REAL
               </span>
             </div>
           </div>
@@ -657,6 +1093,268 @@ export default function Analiticas({ user }: AnaliticasProps) {
 
       </div>
 
+      {/* SECCIÓN 5: ALERTA DE PRODUCTOS FRÍOS (SIN ROTACIÓN) */}
+      <div className="widget" style={{ padding: '24px', borderRadius: 'var(--card-radius)', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px', flexWrap: 'wrap', gap: '10px' }}>
+          <div>
+            <h3 style={{ fontSize: '15px', fontWeight: 800, color: 'var(--text-primary)', margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <Snowflake size={16} style={{ color: '#0ea5a4' }} /> Alerta de Productos Fríos (Sin Rotación en Inventario)
+            </h3>
+            <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '2px 0 0 0' }}>
+              Artículos con stock disponible que no han registrado ventas en el periodo seleccionado.
+            </p>
+          </div>
+          
+          {/* Selector de días sin venta */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-secondary)' }}>Umbral de Inactividad:</span>
+            <CustomSelect
+              value={coldDays}
+              onChange={(val) => setColdDays(Number(val))}
+              options={[
+                { value: 30, label: 'Más de 30 días' },
+                { value: 60, label: 'Más de 60 días' },
+                { value: 90, label: 'Más de 90 días' }
+              ]}
+              icon={<Clock size={14} style={{ color: 'var(--brand-primary)' }} />}
+              style={{ width: '160px' }}
+            />
+          </div>
+        </div>
+
+        <div style={{ overflowX: 'auto' }}>
+          {coldProducts.length === 0 ? (
+            <div style={{ padding: '30px', textAlign: 'center', color: 'var(--text-muted)' }}>
+              <p style={{ fontSize: '13px', fontWeight: 600 }}>✅ Todos los productos tienen rotación activa en el catálogo.</p>
+            </div>
+          ) : (
+            <table className="details-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12.5px' }}>
+              <thead>
+                <tr style={{ borderBottom: '1.5px solid var(--border-color)', textAlign: 'left', color: 'var(--text-secondary)' }}>
+                  <th style={{ padding: '10px 8px', fontWeight: 800 }}>PRODUCTO</th>
+                  <th style={{ padding: '10px 8px', fontWeight: 800 }}>CÓDIGO/SKU</th>
+                  <th style={{ padding: '10px 8px', fontWeight: 800 }}>CATEGORÍA</th>
+                  <th style={{ padding: '10px 8px', fontWeight: 800, textAlign: 'center' }}>STOCK</th>
+                  <th style={{ padding: '10px 8px', fontWeight: 800, textAlign: 'right' }}>COSTO UNIT.</th>
+                  <th style={{ padding: '10px 8px', fontWeight: 800, textAlign: 'right' }}>PRECIO VENTA</th>
+                  <th style={{ padding: '10px 8px', fontWeight: 800, textAlign: 'right' }}>VALOR STOCK</th>
+                  <th style={{ padding: '10px 8px', fontWeight: 800, textAlign: 'center' }}>ÚLTIMA VENTA</th>
+                  {user.role === 'ADMIN' && <th style={{ padding: '10px 8px', fontWeight: 800, textAlign: 'center' }}>ACCIONES</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {coldProducts.map((p) => {
+                  const totalStockValue = p.stock * p.price;
+                  return (
+                    <tr key={p.id} className="table-row-hover" style={{ borderBottom: '1px solid var(--border-color)', transition: 'background-color 0.2s ease' }}>
+                      <td style={{ padding: '12px 8px', fontWeight: 800, color: 'var(--text-primary)' }}>{p.name}</td>
+                      <td style={{ padding: '12px 8px', color: 'var(--text-muted)' }}><code>{p.code}</code></td>
+                      <td style={{ padding: '12px 8px' }}>
+                        <span style={{ fontSize: '10px', fontWeight: 800, color: '#f59e0b', backgroundColor: 'rgba(245, 158, 11, 0.1)', padding: '2px 8px', borderRadius: '50px' }}>
+                          {p.category}
+                        </span>
+                      </td>
+                      <td style={{ padding: '12px 8px', textAlign: 'center', fontWeight: 700 }}>{p.stock} u.</td>
+                      <td style={{ padding: '12px 8px', textAlign: 'right', color: 'var(--text-secondary)' }}>
+                        {formatUSD(p.cost)}
+                      </td>
+                      <td style={{ padding: '12px 8px', textAlign: 'right', fontWeight: 700, color: 'var(--text-primary)' }}>
+                        {formatUSD(p.price)}
+                      </td>
+                      <td style={{ padding: '12px 8px', textAlign: 'right', fontWeight: 800, color: 'var(--brand-gold)' }}>
+                        {formatUSD(totalStockValue)}
+                      </td>
+                      <td style={{ padding: '12px 8px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                        {p.lastSaleDate ? new Date(p.lastSaleDate).toLocaleDateString('es-VE') : 'Nunca vendido'}
+                      </td>
+                      {user.role === 'ADMIN' && (
+                        <td style={{ padding: '12px 8px', textAlign: 'center' }}>
+                          <button
+                            onClick={() => {
+                              setPromoDiscount('15');
+                              setShowPromoModal(p);
+                            }}
+                            className="btn-yellow"
+                            style={{ padding: '4px 10px', fontSize: '10.5px', borderRadius: '6px', margin: '0 auto', display: 'flex', alignItems: 'center', gap: '4px' }}
+                          >
+                            <Sparkles size={11} />
+                            <span>Promoción</span>
+                          </button>
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+
+      {/* MODAL DE EXPORTACIÓN MULTIFORMATO */}
+      {showExportModal && (
+        <div className="modal-registration-backdrop" style={{
+          position: 'fixed',
+          top: 0, left: 0, right: 0, bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.6)',
+          backdropFilter: 'blur(8px)',
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          zIndex: 1500,
+          padding: '20px'
+        }} onClick={() => setShowExportModal(false)}>
+          <div className="widget animate-entrance" style={{
+            width: '100%',
+            maxWidth: '420px',
+            backgroundColor: 'var(--bg-card)',
+            borderRadius: 'var(--card-radius)',
+            border: '1.5px solid var(--border-color)',
+            boxShadow: '0 20px 50px rgba(0,0,0,0.4)',
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden'
+          }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ padding: '20px 24px', borderBottom: '1.5px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h4 style={{ fontSize: '15px', fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>
+                📥 Descargar Reporte de Analíticas
+              </h4>
+              <button onClick={() => setShowExportModal(false)} style={{ border: 'none', backgroundColor: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '20px', fontWeight: 'bold', lineHeight: 1 }}>×</button>
+            </div>
+            
+            <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.4 }}>
+                Seleccione el formato en el que desea exportar el informe ejecutivo completo consolidado.
+              </p>
+              
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <button
+                  onClick={handleExportExcel}
+                  className="btn-pill-dark"
+                  style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px', padding: '20px', borderRadius: '16px', height: 'auto', justifyContent: 'center' }}
+                >
+                  <FileSpreadsheet size={24} style={{ color: '#22c55e' }} />
+                  <span style={{ fontSize: '12px', fontWeight: 800 }}>EXCEL (XLSX)</span>
+                </button>
+
+                <button
+                  onClick={handleExportPDF}
+                  className="btn-pill-dark"
+                  style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px', padding: '20px', borderRadius: '16px', height: 'auto', justifyContent: 'center' }}
+                >
+                  <FileText size={24} style={{ color: '#ef4444' }} />
+                  <span style={{ fontSize: '12px', fontWeight: 800 }}>PDF REPORT</span>
+                </button>
+              </div>
+            </div>
+            
+            <div style={{ padding: '16px 24px', borderTop: '1.5px solid var(--border-color)', display: 'flex', justifyContent: 'flex-end', backgroundColor: 'var(--bg-input)' }}>
+              <button onClick={() => setShowExportModal(false)} className="btn-pill-dark" style={{ padding: '8px 16px', fontSize: '11px', borderRadius: '8px' }}>
+                CANCELAR
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DE APLICAR PROMOCIÓN DESCUENTO */}
+      {showPromoModal && (
+        <div className="modal-registration-backdrop" style={{
+          position: 'fixed',
+          top: 0, left: 0, right: 0, bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.6)',
+          backdropFilter: 'blur(8px)',
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          zIndex: 1500,
+          padding: '20px'
+        }} onClick={() => setShowPromoModal(null)}>
+          <div className="widget animate-entrance" style={{
+            width: '100%',
+            maxWidth: '400px',
+            backgroundColor: 'var(--bg-card)',
+            borderRadius: 'var(--card-radius)',
+            border: '1.5px solid var(--border-color)',
+            boxShadow: '0 20px 50px rgba(0,0,0,0.4)',
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden'
+          }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ padding: '20px 24px', borderBottom: '1.5px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h4 style={{ fontSize: '15px', fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>
+                🚀 Lanzar Promoción de Producto Frío
+              </h4>
+              <button onClick={() => setShowPromoModal(null)} style={{ border: 'none', backgroundColor: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '20px', fontWeight: 'bold' }}>×</button>
+            </div>
+            
+            <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div>
+                <span style={{ fontSize: '10px', fontWeight: 800, color: 'var(--text-muted)' }}>PRODUCTO SELECCIONADO</span>
+                <strong style={{ fontSize: '14px', color: 'var(--text-primary)', display: 'block', marginTop: '2px' }}>{showPromoModal.name}</strong>
+                <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>SKU: {showPromoModal.code} | Stock: {showPromoModal.stock} unidades</span>
+              </div>
+              
+              <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '14px', display: 'flex', justifyContent: 'space-between', fontSize: '12.5px' }}>
+                <div>
+                  <span style={{ color: 'var(--text-secondary)', display: 'block' }}>Precio Actual:</span>
+                  <strong style={{ color: 'var(--text-primary)', fontSize: '15px' }}>{formatUSD(showPromoModal.price)}</strong>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <span style={{ color: 'var(--text-secondary)', display: 'block' }}>Nuevo Precio Estimado:</span>
+                  <strong style={{ color: '#22c55e', fontSize: '15px' }}>
+                    {formatUSD(Number((showPromoModal.price * (1 - (Number(promoDiscount) || 0) / 100)).toFixed(2)))}
+                  </strong>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '6px' }}>
+                <label style={{ fontSize: '11px', fontWeight: 800, color: 'var(--text-secondary)' }}>PORCENTAJE DE DESCUENTO (%)</label>
+                <div style={{
+                  padding: '10px 12px',
+                  borderRadius: '10px',
+                  backgroundColor: 'var(--bg-primary)',
+                  border: '1.2px solid var(--border-color)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px'
+                }}>
+                  <input
+                    type="text"
+                    value={promoDiscount}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val === '' || (Number(val) >= 0 && Number(val) < 100)) {
+                        setPromoDiscount(val);
+                      }
+                    }}
+                    style={{
+                      border: 'none',
+                      backgroundColor: 'transparent',
+                      color: 'var(--text-primary)',
+                      fontSize: '14px',
+                      fontWeight: 700,
+                      width: '100%',
+                      outline: 'none'
+                    }}
+                    placeholder="15"
+                  />
+                  <span style={{ fontWeight: 800, color: 'var(--text-secondary)' }}>%</span>
+                </div>
+              </div>
+            </div>
+            
+            <div style={{ padding: '16px 24px', borderTop: '1.5px solid var(--border-color)', display: 'flex', gap: '10px', backgroundColor: 'var(--bg-input)' }}>
+              <button onClick={() => setShowPromoModal(null)} className="btn-pill-dark" style={{ flex: 1, padding: '10px 0', fontSize: '11px', justifyContent: 'center', borderRadius: '8px' }}>
+                CANCELAR
+              </button>
+              <button onClick={handleApplyPromoDiscount} className="btn-yellow" style={{ flex: 1, padding: '10px 0', fontSize: '11px', justifyContent: 'center', borderRadius: '8px' }}>
+                APLICAR DESCUENTO
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

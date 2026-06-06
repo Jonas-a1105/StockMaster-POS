@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { 
-  Building2, MapPin, Printer, Percent, ShieldCheck, AlertCircle, Save, CheckCircle, Download, Upload, Info, ArrowUpCircle, RefreshCw
+  Building2, MapPin, Printer, Percent, ShieldCheck, AlertCircle, Save, CheckCircle, Download, Upload, Info, ArrowUpCircle, RefreshCw, HelpCircle, Sparkles
 } from 'lucide-react';
 import { useBusinessSettings } from '../contexts/BusinessSettingsContext';
 import { useToast } from './ToastNotification';
@@ -109,17 +109,16 @@ export default function BusinessSettings({ user, onOpenUpdater }: BusinessSettin
 
       // 2. Fetch all RxDB collections
       const db = await getDatabase();
-      const productsDocs = await db.products.find().exec();
-      const clientsDocs = await db.clients.find().exec();
-      const salesDocs = await db.sales.find().exec();
-      const usersDocs = await db.users.find().exec();
+      const collectionNames = ['products', 'clients', 'sales', 'users', 'suppliers', 'purchases', 'payroll', 'attendance', 'auditLogs', 'expenses'];
+      const rxdbData: Record<string, any[]> = {};
 
-      const rxdbData = {
-        products: productsDocs.map(d => d.toJSON()),
-        clients: clientsDocs.map(d => d.toJSON()),
-        sales: salesDocs.map(d => d.toJSON()),
-        users: usersDocs.map(d => d.toJSON())
-      };
+      for (const name of collectionNames) {
+        const collection = (db as any)[name];
+        if (collection) {
+          const docs = await collection.find().exec();
+          rxdbData[name] = docs.map((d: any) => d.toJSON());
+        }
+      }
 
       const backupObj = {
         timestamp: new Date().toISOString(),
@@ -173,53 +172,23 @@ export default function BusinessSettings({ user, onOpenUpdater }: BusinessSettin
         localStorage.setItem(key, backupObj.localStorage[key]);
       });
 
-      // 2. Restore RxDB collections
+      // 2. Restore all RxDB collections dynamically
       const db = await getDatabase();
-      
-      // Products restore
-      if (backupObj.rxdb.products && Array.isArray(backupObj.rxdb.products)) {
-        for (const prod of backupObj.rxdb.products) {
-          const doc = await db.products.findOne({ selector: { id: prod.id } }).exec();
-          if (doc) {
-            await doc.patch(prod);
-          } else {
-            await db.products.insert(prod);
-          }
-        }
-      }
+      const collectionNames = ['products', 'clients', 'sales', 'users', 'suppliers', 'purchases', 'payroll', 'attendance', 'auditLogs', 'expenses'];
 
-      // Clients restore
-      if (backupObj.rxdb.clients && Array.isArray(backupObj.rxdb.clients)) {
-        for (const cl of backupObj.rxdb.clients) {
-          const doc = await db.clients.findOne({ selector: { id: cl.id } }).exec();
-          if (doc) {
-            await doc.patch(cl);
-          } else {
-            await db.clients.insert(cl);
-          }
-        }
-      }
-
-      // Sales restore
-      if (backupObj.rxdb.sales && Array.isArray(backupObj.rxdb.sales)) {
-        for (const s of backupObj.rxdb.sales) {
-          const doc = await db.sales.findOne({ selector: { id: s.id } }).exec();
-          if (doc) {
-            await doc.patch(s);
-          } else {
-            await db.sales.insert(s);
-          }
-        }
-      }
-
-      // Users restore
-      if (backupObj.rxdb.users && Array.isArray(backupObj.rxdb.users)) {
-        for (const u of backupObj.rxdb.users) {
-          const doc = await db.users.findOne({ selector: { id: u.id } }).exec();
-          if (doc) {
-            await doc.patch(u);
-          } else {
-            await db.users.insert(u);
+      for (const name of collectionNames) {
+        const docs = backupObj.rxdb[name];
+        if (docs && Array.isArray(docs)) {
+          const collection = (db as any)[name];
+          if (collection) {
+            for (const docData of docs) {
+              const existing = await collection.findOne({ selector: { id: docData.id } }).exec();
+              if (existing) {
+                await existing.patch(docData);
+              } else {
+                await collection.insert(docData);
+              }
+            }
           }
         }
       }
@@ -317,6 +286,7 @@ export default function BusinessSettings({ user, onOpenUpdater }: BusinessSettin
               disabled={!isAdmin || isSaving}
               className="search-input" 
               placeholder="Ej. Distribuidora StockMaster C.A."
+              autoComplete="organization"
               style={{
                 width: '100%',
                 height: '42px',
@@ -366,6 +336,7 @@ export default function BusinessSettings({ user, onOpenUpdater }: BusinessSettin
               disabled={!isAdmin || isSaving}
               className="search-input" 
               placeholder="Ej. J-40812991-0"
+              autoComplete="tax-id"
               style={{
                 width: '100%',
                 height: '42px',
@@ -378,6 +349,11 @@ export default function BusinessSettings({ user, onOpenUpdater }: BusinessSettin
                 letterSpacing: '0.5px'
               }}
             />
+            {businessRIF && !isRifValid && (
+              <span style={{ color: '#ef4444', fontSize: '11px', fontWeight: 600 }}>
+                Formato de RIF inválido. Debe ser: J-XXXXXXXX-X
+              </span>
+            )}
           </div>
 
           {/* Dirección fiscal */}
@@ -392,6 +368,7 @@ export default function BusinessSettings({ user, onOpenUpdater }: BusinessSettin
                 disabled={!isAdmin || isSaving}
                 placeholder="Ej. Av. Francisco de Miranda, Chacao, Caracas..."
                 rows={3}
+                autoComplete="street-address"
                 style={{
                   width: '100%',
                   padding: '12px',
@@ -631,6 +608,48 @@ export default function BusinessSettings({ user, onOpenUpdater }: BusinessSettin
           >
             <RefreshCw size={14} />
             <span>Buscar Actualizaciones</span>
+          </button>
+        </div>
+      </div>
+
+      {/* SECCIÓN: TUTORIAL DE INDUCCIÓN */}
+      <div className="widget" style={{ padding: '24px', borderRadius: 'var(--card-radius)', display: 'flex', flexDirection: 'column', gap: '20px', marginTop: '8px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px' }}>
+          <HelpCircle size={20} style={{ color: 'var(--brand-primary)' }} />
+          <h3 style={{ fontSize: '15px', fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>
+            Guía de Inducción Interactiva
+          </h3>
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
+          <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5, flex: 1 }}>
+            ¿Necesitas repasar el tutorial? Puedes activar el asistente de inducción para volver a configurar los parámetros y realizar paso a paso el registro de productos y ventas de prueba.
+          </p>
+
+          <button
+            type="button"
+            onClick={() => {
+              localStorage.removeItem('stockmaster_onboarding_completed');
+              localStorage.removeItem('stockmaster_tutorial_active');
+              localStorage.removeItem('stockmaster_tutorial_step');
+              window.location.reload();
+            }}
+            className="btn-pill-dark"
+            style={{
+              padding: '10px 20px',
+              borderRadius: 'var(--button-radius)',
+              fontSize: '12.5px',
+              fontWeight: 800,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              border: '1px solid var(--brand-primary)',
+              color: 'var(--brand-primary)',
+              backgroundColor: 'var(--brand-primary-light)'
+            }}
+          >
+            <Sparkles size={14} />
+            <span>Iniciar Asistente y Tutorial</span>
           </button>
         </div>
       </div>

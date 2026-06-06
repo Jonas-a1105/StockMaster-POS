@@ -3,6 +3,8 @@ import { createContext, useContext, useState, useEffect, useCallback, type React
 interface ExchangeRateContextValue {
   dolarRate: number;
   isManual: boolean;
+  isStale: boolean;
+  lastUpdated: Date | null;
   updateRate: (newRate: number) => void;
   resetToLiveRate: () => Promise<void>;
   convertToVES: (usdAmount: number) => number;
@@ -16,7 +18,10 @@ const ExchangeRateContext = createContext<ExchangeRateContextValue | null>(null)
 
 const STORAGE_KEY = 'stockmaster_dolar_rate';
 const MANUAL_KEY = 'stockmaster_dolar_rate_is_manual';
+const TIMESTAMP_KEY = 'stockmaster_dolar_rate_updated_at';
 const DEFAULT_RATE = 40.50; // Fallback rate in Bolivare Soberanos per USD
+
+const FALLBACK_API = 'https://pydolarvenezuela-api.vercel.app/api/v1/dollar/unit/bcv';
 
 export function ExchangeRateProvider({ children }: { children: ReactNode }) {
   const [dolarRate, setDolarRate] = useState<number>(() => {
@@ -36,6 +41,25 @@ export function ExchangeRateProvider({ children }: { children: ReactNode }) {
     }
   });
 
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(() => {
+    try {
+      const saved = localStorage.getItem(TIMESTAMP_KEY);
+      return saved ? new Date(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  const isStale = lastUpdated ? (Date.now() - lastUpdated.getTime()) > 2 * 60 * 60 * 1000 : true;
+
+  const saveRate = useCallback((rate: number) => {
+    const now = new Date();
+    setDolarRate(rate);
+    setLastUpdated(now);
+    localStorage.setItem(STORAGE_KEY, rate.toString());
+    localStorage.setItem(TIMESTAMP_KEY, now.toISOString());
+  }, []);
+
   const fetchLiveRate = useCallback(async () => {
     // Si la tasa está configurada en modo manual, no sobreescribir automáticamente
     const savedIsManual = localStorage.getItem(MANUAL_KEY) === 'true';
@@ -44,63 +68,80 @@ export function ExchangeRateProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    try {
-      // Free public API for BCV Official exchange rate in Venezuela
-      const res = await fetch('https://ve.dolarapi.com/v1/dolares/oficial');
-      if (res.ok) {
+    const tryApi = async (url: string, parser: (data: any) => number | null): Promise<number | null> => {
+      try {
+        const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+        if (!res.ok) return null;
         const data = await res.json();
-        const rate = data.promedio || data.venta || data.compra;
-        if (typeof rate === 'number' && rate > 0) {
-          setDolarRate(rate);
-          localStorage.setItem(STORAGE_KEY, rate.toString());
-          console.log(`🪙 Tasa de Cambio BCV Oficial cargada en vivo: Bs. ${rate}`);
-        }
+        const rate = parser(data);
+        return (typeof rate === 'number' && rate > 0) ? rate : null;
+      } catch {
+        return null;
       }
-    } catch (err) {
-      console.warn('⚠️ No se pudo obtener la tasa BCV en vivo (Modo Offline o API no disponible). Usando fallback local:', dolarRate);
+    };
+
+    const apis: [string, (d: any) => number | null][] = [
+      ['https://ve.dolarapi.com/v1/dolares/oficial', (d) => d.promedio || d.venta || d.compra],
+      [FALLBACK_API, (d) => d?.price || d?.promedio || null],
+    ];
+
+    for (const [url, parser] of apis) {
+      const rate = await tryApi(url, parser);
+      if (rate !== null) {
+        saveRate(rate);
+        console.log(`🪙 Tasa BCV cargada desde ${url}: Bs. ${rate}`);
+        return;
+      }
     }
-  }, [dolarRate]);
+
+    console.warn('⚠️ No se pudo obtener la tasa BCV en vivo. Usando último valor guardado.');
+  }, [saveRate]);
 
   useEffect(() => {
     if (navigator.onLine) {
       fetchLiveRate();
     }
-    // Auto-refresh rate every 30 minutes
-    const interval = setInterval(() => {
-      if (navigator.onLine) fetchLiveRate();
-    }, 30 * 60 * 1000);
 
-    return () => clearInterval(interval);
+    const handleOnline = () => fetchLiveRate();
+    window.addEventListener('online', handleOnline);
+
+    // Auto-refresh rate every 30 minutes (only when online)
+    let interval: ReturnType<typeof setInterval> | null = null;
+    const startInterval = () => {
+      if (interval) clearInterval(interval);
+      interval = setInterval(() => {
+        if (navigator.onLine) fetchLiveRate();
+      }, 30 * 60 * 1000);
+    };
+    const handleOffline = () => { if (interval) clearInterval(interval); interval = null; };
+    const handleBackOnline = () => startInterval();
+
+    window.addEventListener('offline', handleOffline);
+    window.addEventListener('online', handleBackOnline);
+
+    if (navigator.onLine) startInterval();
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('online', handleBackOnline);
+      if (interval) clearInterval(interval);
+    };
   }, [fetchLiveRate]);
 
   const updateRate = useCallback((newRate: number) => {
     if (newRate > 0) {
-      setDolarRate(newRate);
-      localStorage.setItem(STORAGE_KEY, newRate.toString());
+      saveRate(newRate);
       setIsManual(true);
       localStorage.setItem(MANUAL_KEY, 'true');
     }
-  }, []);
+  }, [saveRate]);
 
   const resetToLiveRate = useCallback(async () => {
     setIsManual(false);
     localStorage.setItem(MANUAL_KEY, 'false');
-    // Forzamos la obtención en vivo pasando por alto el check manual
-    try {
-      const res = await fetch('https://ve.dolarapi.com/v1/dolares/oficial');
-      if (res.ok) {
-        const data = await res.json();
-        const rate = data.promedio || data.venta || data.compra;
-        if (typeof rate === 'number' && rate > 0) {
-          setDolarRate(rate);
-          localStorage.setItem(STORAGE_KEY, rate.toString());
-          console.log(`🪙 Tasa restablecida a BCV Oficial: Bs. ${rate}`);
-        }
-      }
-    } catch (err) {
-      console.warn('⚠️ Error al restablecer tasa oficial. Permaneciendo en el último valor.');
-    }
-  }, []);
+    await fetchLiveRate();
+  }, [fetchLiveRate]);
 
   const convertToVES = useCallback((usdAmount: number) => {
     return usdAmount * dolarRate;
@@ -123,6 +164,8 @@ export function ExchangeRateProvider({ children }: { children: ReactNode }) {
     <ExchangeRateContext.Provider value={{
       dolarRate,
       isManual,
+      isStale,
+      lastUpdated,
       updateRate,
       resetToLiveRate,
       convertToVES,

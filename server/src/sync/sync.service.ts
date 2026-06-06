@@ -118,15 +118,17 @@ export class SyncService {
   }
 
   // 2. PULL: Envía al cliente todos los cambios ocurridos desde su última sincronización
+  // Incluye productos eliminados (soft-delete con deletedAt)
   async pullProducts(lastSyncedAtStr: string) {
     const lastSyncedAt = new Date(lastSyncedAtStr);
     
-    // Obtiene únicamente los productos modificados después de la fecha de última sincronización
+    // Obtiene productos modificados o eliminados después de la fecha de última sincronización
     const updatedProducts = await this.prisma.product.findMany({
       where: {
-        updatedAt: {
-          gt: lastSyncedAt
-        }
+        OR: [
+          { updatedAt: { gt: lastSyncedAt } },
+          { deletedAt: { gt: lastSyncedAt } },
+        ]
       },
       orderBy: {
         updatedAt: 'asc'
@@ -604,4 +606,63 @@ export class SyncService {
     });
     return { payroll: updated, serverTime: new Date().toISOString() };
   }
+
+  // 12. PUSH EXPENSES: Recibe gastos modificados localmente
+  async pushExpenses(clientExpenses: any[], userId: string, ipAddress = 'unknown', userAgent = 'RxDB Sync Client') {
+    const processedIds: string[] = [];
+    const expenseIds = clientExpenses.map(e => e.id);
+    const serverExpenses = await this.prisma.expense.findMany({
+      where: { id: { in: expenseIds } }
+    });
+    const serverExpensesMap = new Map(serverExpenses.map(e => [e.id, e]));
+
+    await this.prisma.$transaction(async (tx) => {
+      for (const e of clientExpenses) {
+        const existing = serverExpensesMap.get(e.id);
+        const clientUpdatedAt = new Date(e.updatedAt);
+
+        if (!existing) {
+          await tx.expense.create({
+            data: {
+              id: e.id,
+              description: e.description,
+              amount: e.amount,
+              category: e.category || 'General',
+              date: new Date(e.date),
+              createdAt: new Date(e.createdAt),
+              updatedAt: clientUpdatedAt
+            }
+          });
+          processedIds.push(e.id);
+        } else {
+          if (clientUpdatedAt > new Date(existing.updatedAt)) {
+            await tx.expense.update({
+              where: { id: e.id },
+              data: {
+                description: e.description,
+                amount: e.amount,
+                category: e.category || 'General',
+                date: new Date(e.date),
+                updatedAt: clientUpdatedAt
+              }
+            });
+            processedIds.push(e.id);
+          }
+        }
+      }
+    });
+
+    return { processedIds };
+  }
+
+  // 13. PULL EXPENSES: Envía gastos modificados
+  async pullExpenses(lastSyncedAtStr: string) {
+    const lastSyncedAt = new Date(lastSyncedAtStr);
+    const updated = await this.prisma.expense.findMany({
+      where: { updatedAt: { gt: lastSyncedAt } },
+      orderBy: { updatedAt: 'asc' }
+    });
+    return { expenses: updated, serverTime: new Date().toISOString() };
+  }
 }
+

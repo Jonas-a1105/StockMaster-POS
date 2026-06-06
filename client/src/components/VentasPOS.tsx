@@ -4,6 +4,7 @@ import { getDatabase, type ProductDocType, type ClientDocType } from '../db/data
 import { syncWorker } from '../db/sync';
 import { useExchangeRate } from '../contexts/ExchangeRateContext';
 import { logAuditEvent } from '../utils/audit';
+import { getLicenseState, PLAN_LIMITS } from '../utils/license';
 import { useToast } from './ToastNotification';
 import { useBusinessSettings } from '../contexts/BusinessSettingsContext';
 
@@ -12,6 +13,7 @@ import { CartPanel } from './CartPanel';
 import { CheckoutModal } from './CheckoutModal';
 import { TicketPreviewModal } from './TicketPreviewModal';
 import { ScannerModal } from './ScannerModal';
+import { SuccessSaleModal } from './SuccessSaleModal';
 
 interface VentasPOSProps {
   user: {
@@ -65,6 +67,7 @@ export default function VentasPOS({ user, searchTerm = '' }: VentasPOSProps) {
 
   // Checkout & Cashier Calculator states
   const [showCheckoutModal, setShowCheckoutModal] = useState(false);
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [usdPaid, setUsdPaid] = useState('0');
   const [vesPaid, setVesPaid] = useState('0');
   const [eurPaid, setEurPaid] = useState('0');
@@ -182,33 +185,26 @@ export default function VentasPOS({ user, searchTerm = '' }: VentasPOSProps) {
 
   useEffect(() => {
     if (showCameraScanner) {
-      navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
-        .then(stream => {
-          setScannerStream(stream);
-          const videoElement = document.getElementById('barcode-scanner-video') as HTMLVideoElement;
-          if (videoElement) {
-            videoElement.srcObject = stream;
-            videoElement.play().catch(e => console.log('Video play error', e));
-          }
-        })
-        .catch(err => {
-          console.error('Error opening camera:', err);
+      import('../utils/barcode').then(({ startBarcodeScanner, stopBarcodeScanner }) => {
+        startBarcodeScanner('barcode-scanner-video', (code) => {
+          handleBarcodeScanned(code);
+        }, (err) => {
+          console.log('Scanner error:', err);
+        }).catch(err => {
+          console.error('Error starting barcode scanner:', err);
           addToast({
             type: 'warning',
             title: 'Cámara No Disponible',
-            message: 'No se pudo activar la cámara WebRTC. Utilice la simulación de escaneo.'
+            message: 'No se pudo activar el escáner. Intente usar la entrada manual.'
           });
         });
+        return () => stopBarcodeScanner();
+      });
     } else {
-      if (scannerStream) {
-        scannerStream.getTracks().forEach(track => track.stop());
-        setScannerStream(null);
-      }
+      import('../utils/barcode').then(({ stopBarcodeScanner }) => stopBarcodeScanner());
     }
     return () => {
-      if (scannerStream) {
-        scannerStream.getTracks().forEach(track => track.stop());
-      }
+      import('../utils/barcode').then(({ stopBarcodeScanner }) => stopBarcodeScanner());
     };
   }, [showCameraScanner]);
 
@@ -449,6 +445,22 @@ export default function VentasPOS({ user, searchTerm = '' }: VentasPOSProps) {
     setErrorMessage(null);
     try {
       const db = await getDatabase();
+
+      // Enforce Plan Sales Limit
+      const licState = getLicenseState();
+      if (!licState.demoActive && licState.plan) {
+        const limit = PLAN_LIMITS[licState.plan].maxSales;
+        const currentSalesCount = await db.sales.find().exec().then(docs => docs.length);
+        if (currentSalesCount >= limit) {
+          addToast({
+            type: 'error',
+            title: 'Límite de Ventas Superado',
+            message: `Su plan actual (${licState.plan.toUpperCase()}) tiene un límite de ${limit} ventas totales. Actualice su suscripción en la sección Acerca de para continuar.`
+          });
+          throw new Error(`Límite del plan superado: su plan actual permite un máximo de ${limit} ventas.`);
+        }
+      }
+
       const saleId = crypto.randomUUID();
       const ticketNumber = `TK-${Date.now().toString().slice(-6)}`;
 
@@ -639,6 +651,7 @@ export default function VentasPOS({ user, searchTerm = '' }: VentasPOSProps) {
       setSurchargeValue(0);
       setShowMobileCart(false);
       setShowCheckoutModal(false);
+      setShowSuccessModal(true);
       
       // Lanza sincronización silenciosa
       syncWorker.sync();
@@ -1129,9 +1142,23 @@ export default function VentasPOS({ user, searchTerm = '' }: VentasPOSProps) {
         paymentMethod={paymentMethod}
       />
 
+      {/* SUCCESS SALE ANIMATED MODAL */}
+      <SuccessSaleModal
+        isOpen={showSuccessModal}
+        onClose={() => {
+          setShowSuccessModal(false);
+          setTicketReceipt(null);
+        }}
+        ticketReceipt={ticketReceipt}
+        onViewDetailedTicket={() => {
+          setShowSuccessModal(false);
+        }}
+        isMobile={isMobile}
+      />
+
       {/* TICKET IMPRESO PREVIEW MODAL */}
       <TicketPreviewModal
-        ticketReceipt={ticketReceipt}
+        ticketReceipt={showSuccessModal ? null : ticketReceipt}
         onClose={() => setTicketReceipt(null)}
         isMobile={isMobile}
       />

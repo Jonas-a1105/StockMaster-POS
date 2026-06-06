@@ -2,12 +2,6 @@ import { getDatabase } from './database';
 import { API_URL } from '../config';
 import * as bcrypt from 'bcryptjs';
 
-async function sha256(message: string): Promise<string> {
-  const msgBuffer = new TextEncoder().encode(message);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-}
 const TOKEN_REFRESH_MARGIN_MS = 120_000; // Refrescar 2 minutos antes de expirar
 
 let refreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -23,7 +17,9 @@ async function doRefreshToken(): Promise<string | null> {
       body: JSON.stringify({ refreshToken }),
     });
     if (!res.ok) {
-      logout();
+      if (res.status === 401 || res.status === 403) {
+        logout();
+      }
       return null;
     }
     const data = await res.json();
@@ -31,8 +27,8 @@ async function doRefreshToken(): Promise<string | null> {
     localStorage.setItem('auth_refresh_token', data.refreshToken);
     scheduleTokenRefresh();
     return data.accessToken;
-  } catch {
-    logout();
+  } catch (err) {
+    console.warn('Network error or server down during token refresh, keeping offline session:', err);
     return null;
   }
 }
@@ -91,12 +87,25 @@ export async function loginOnline(email: string, password: string) {
 
   const { accessToken, refreshToken, user } = data;
 
+  const cachedUserStr = localStorage.getItem('auth_user');
+  if (cachedUserStr) {
+    try {
+      const cachedUser = JSON.parse(cachedUserStr);
+      if (cachedUser.id !== user.id) {
+        const { purgeDatabase } = await import('./database');
+        await purgeDatabase();
+      }
+    } catch (e) {
+      console.error('Error al purgar la base de datos por cambio de usuario:', e);
+    }
+  }
+
   localStorage.setItem('auth_token', accessToken);
   localStorage.setItem('auth_refresh_token', refreshToken);
   localStorage.setItem('auth_user', JSON.stringify({ ...user, offline: false }));
   scheduleTokenRefresh();
 
-  const localPwHash = await sha256(password);
+  const localPwHash = await bcrypt.hash(password, 10);
   const localPinHash = user.pin || undefined;
   const db = await getDatabase();
 
@@ -131,7 +140,7 @@ export async function loginOffline(email: string, passwordOrPin: string, isPin =
     if (!localUser.pinHash) throw new Error('PIN no configurado para este usuario.');
     isMatch = await bcrypt.compare(passwordOrPin, localUser.pinHash);
   } else {
-    isMatch = (await sha256(passwordOrPin)) === localUser.passwordHash;
+    isMatch = await bcrypt.compare(passwordOrPin, localUser.passwordHash);
   }
 
   if (!isMatch) throw new Error('PIN o Contraseña incorrecta.');
@@ -151,13 +160,14 @@ export function logout() {
   if (token && refreshToken) {
     fetch(`${API_URL}/auth/logout`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      headers: { Authorization: `Bearer ${token}` },
     }).catch(() => {});
   }
 
   localStorage.removeItem('auth_token');
   localStorage.removeItem('auth_refresh_token');
   localStorage.removeItem('auth_user');
+  import('./database').then(({ purgeDatabase }) => purgeDatabase().catch(console.error));
 }
 
 export function isOnline(): boolean {
